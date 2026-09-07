@@ -1365,6 +1365,7 @@ impl Mode {
     pub const COLOR_SCHEME_REPORT: Self = Self::new(2031, ModeKind::Dec);
     pub const VISIBILITY_REPORT: Self = Self::new(2033, ModeKind::Dec);
     pub const IN_BAND_RESIZE: Self = Self::new(2048, ModeKind::Dec);
+    pub const PASTE_EVENTS: Self = Self::new(5522, ModeKind::Dec);
 }
 
 /// The kind of a terminal mode.
@@ -2036,7 +2037,8 @@ impl<'a> ClipboardReplyContent<'a> {
     }
 }
 
-/// A MIME type listed in a [`ClipboardRead::reply`].
+/// A MIME type passed to libghostty without copying, as listed in a
+/// [`ClipboardRead::reply`] or offered to [`Terminal::paste`].
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct ClipboardMime<'a> {
@@ -2045,7 +2047,7 @@ pub struct ClipboardMime<'a> {
 }
 
 impl<'a> ClipboardMime<'a> {
-    /// A MIME type available on the clipboard.
+    /// A MIME type such as `text/plain`.
     #[must_use]
     pub const fn new(mime: &'a str) -> Self {
         Self {
@@ -2693,9 +2695,9 @@ handlers! {
     /// reads are refused with EPERM.
     ///
     /// Installing this callback also enables Kitty paste events (mode 5522):
-    /// `ghostty_terminal_paste` sends the program an event instead of the
-    /// text, and the program's follow-up read arrives here with `granted` set
-    /// since the user already pasted.
+    /// [`Terminal::paste`] sends the program an event instead of the text, and
+    /// the program's follow-up read arrives here with `granted` set since the
+    /// user already pasted.
     pub fn on_clipboard_read(
         &mut self,
         tag = CLIPBOARD_READ,
