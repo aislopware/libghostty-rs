@@ -1,0 +1,16 @@
+# The examples form their own workspace, separate from the library crates.
+# That keeps their heavier dependencies (macroquad, nix, ...) out of the root
+# workspace's lockfile, metadata and `--workspace` builds, while still letting
+# them share one lockfile. They are never published.
+[workspace]
+members = ["*"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.90"
+publish = false
+
+[workspace.dependencies]
+libghostty-vt = { path = "../crates/libghostty-vt" }

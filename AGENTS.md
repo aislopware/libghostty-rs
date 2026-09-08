@@ -6,8 +6,8 @@
 - Enter dev shell: `nix develop`
 - Check: `cargo check`
 - Test: `cargo test -p libghostty-vt-sys`
-- Build example: `cargo build -p ghostling_rs`
-- Run example: `cargo run -p ghostling_rs`
+- Build examples: `cargo build --manifest-path example/Cargo.toml --workspace`
+- Run example: `cargo run --manifest-path example/Cargo.toml -p ghostling_rs`
 
 ## Code Conventions
 

@@ -91,7 +91,7 @@ enable `libghostty-vt/link-dynamic`.
 nix develop
 cargo check
 cargo test -p libghostty-vt-sys
-cargo build -p ghostling_rs
+cargo build --manifest-path example/Cargo.toml --workspace
 ```
 
 ### Regenerating bindings
@@ -126,7 +126,8 @@ Use `nix develop .#miri` when working interactively with the same toolchain.
 
 ### Running the example
 
-Run the examples by entering the folder, and run:
+The examples live in their own workspace under `example/`. Run one by
+entering its folder, and run:
 
 ```sh
 cargo run
