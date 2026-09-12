@@ -72,13 +72,13 @@ impl<'alloc> Encoder<'alloc> {
     /// keys typically don't generate escape sequences. Check the returned
     /// `usize` to determine if any data was written.
     pub fn encode_to_vec(&mut self, event: &Event, vec: &mut Vec<u8>) -> Result<()> {
-        let remaining = vec.capacity() - vec.len();
-
         let written = match self.encode_to_uninit_buf(event, vec.spare_capacity_mut()) {
             Ok(v) => Ok(v),
             Err(Error::OutOfSpace { required }) => {
-                // Retry with more capacity
-                vec.reserve(required - remaining);
+                // Retry with more capacity. `reserve` counts from `len`, so ask for the
+                // whole requirement: reserving only the shortfall left the capacity as it
+                // was whenever some, but not enough, was spare.
+                vec.reserve(required);
                 self.encode_to_uninit_buf(event, vec.spare_capacity_mut())
             }
             Err(e) => Err(e),
@@ -389,4 +389,38 @@ pub enum Button {
     Nine = ffi::MouseButton::NINE,
     Ten = ffi::MouseButton::TEN,
     Eleven = ffi::MouseButton::ELEVEN,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A vector with some spare room, but not enough, grows to fit: `reserve` counts from
+    /// the length, so the retry asks for the whole requirement.
+    #[test]
+    fn encode_to_vec_grows_a_vector_with_too_little_spare_room() {
+        let mut enc = Encoder::new().expect("an encoder");
+        enc.set_tracking_mode(TrackingMode::Normal).set_format(Format::Sgr).set_size(
+            EncoderSize {
+                screen_width: 800,
+                screen_height: 600,
+                cell_width: 8,
+                cell_height: 16,
+                padding_top: 0,
+                padding_bottom: 0,
+                padding_right: 0,
+                padding_left: 0,
+            },
+        );
+        let mut ev = Event::new().expect("an event");
+        ev.set_action(Action::Press)
+            .set_button(Some(Button::Four))
+            .set_position(Position { x: 12.0, y: 20.0 });
+        let mut out = Vec::with_capacity(4);
+        enc.encode_to_vec(&ev, &mut out).expect("grows to fit");
+        assert_eq!(out, b"\x1b[<64;2;2M");
+        // And again into the same vector, whose spare room is now short by a few bytes.
+        enc.encode_to_vec(&ev, &mut out).expect("grows again");
+        assert_eq!(out, b"\x1b[<64;2;2M\x1b[<64;2;2M");
+    }
 }
