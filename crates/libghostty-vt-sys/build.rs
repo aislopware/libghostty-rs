@@ -94,7 +94,10 @@ fn main() {
     println!("cargo:rerun-if-env-changed=HOST");
     println!("cargo:rerun-if-env-changed=DEBUG");
     println!("cargo:rerun-if-env-changed=OPT_LEVEL");
-    println!("cargo:rerun-if-changed=crates/libghostty-vt-sys/build.rs");
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
+    // Relative to the package root. The fetched source is pinned by
+    // GHOSTTY_COMMIT in this file, so this line also covers a new pin.
+    println!("cargo:rerun-if-changed=build.rs");
 
     // An explicit source override should stay authoritative even when the
     // pkg-config feature is enabled, so local Ghostty checkouts remain easy to
@@ -130,6 +133,7 @@ fn build_vendored(link_mode: LinkMode, target: &str) {
                 "GHOSTTY_SOURCE_DIR does not contain build.zig: {}",
                 p.display()
             );
+            watch_source_revision(&p);
             p
         }
         Err(_) => fetch_ghostty(&out_dir),
@@ -402,6 +406,72 @@ fn zig_optimize_mode() -> &'static str {
         Ok("s") | Ok("z") => "ReleaseSmall",
         _ => "ReleaseFast",
     }
+}
+
+/// Ask Cargo to rerun this script when the ghostty source it builds from
+/// changes.
+///
+/// A git checkout is watched through its HEAD rather than its files. Moving a
+/// submodule or checking out another commit rewrites HEAD, and HEAD pins every
+/// tracked file, so it is the exact signal. Listing the source directory would
+/// make Cargo stat thousands of files on every build. Uncommitted edits inside
+/// the checkout are not seen; `touch build.zig` after making one.
+///
+/// A source without git metadata has no revision to watch, so the whole tree is
+/// watched. That is slower, but a stale library from such a tree is worse.
+fn watch_source_revision(src: &Path) {
+    let Some(git_dir) = git_dir(src) else {
+        println!("cargo:rerun-if-changed={}", src.display());
+        return;
+    };
+    let head = git_dir.join("HEAD");
+    println!("cargo:rerun-if-changed={}", head.display());
+
+    let common_dir = std::fs::read_to_string(git_dir.join("commondir"))
+        .map(|dir| git_dir.join(dir.trim()))
+        .unwrap_or_else(|_| git_dir.clone());
+
+    // A reftable repository keeps a stub HEAD and every ref in its tables.
+    let reftable = common_dir.join("reftable");
+    if reftable.is_dir() {
+        println!("cargo:rerun-if-changed={}", reftable.display());
+        return;
+    }
+
+    // On a branch, HEAD names a ref whose commit sits in a loose ref file or
+    // in packed-refs. Cargo reruns on every build for a watched path that does
+    // not exist, so a missing loose ref is watched through its nearest existing
+    // parent directory, whose mtime moves when git writes the ref.
+    let Ok(contents) = std::fs::read_to_string(&head) else {
+        return;
+    };
+    let Some(reference) = contents.trim().strip_prefix("ref: ") else {
+        return;
+    };
+    let packed_refs = common_dir.join("packed-refs");
+    if packed_refs.exists() {
+        println!("cargo:rerun-if-changed={}", packed_refs.display());
+    }
+    let loose_ref = common_dir.join(reference);
+    if let Some(watched) = loose_ref
+        .ancestors()
+        .take_while(|path| *path != common_dir)
+        .find(|path| path.exists())
+    {
+        println!("cargo:rerun-if-changed={}", watched.display());
+    }
+}
+
+/// The git directory of a checkout: `.git` itself, or the directory a
+/// `gitdir:` file points at, as submodules and linked worktrees use.
+fn git_dir(src: &Path) -> Option<PathBuf> {
+    let dot_git = src.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let contents = std::fs::read_to_string(&dot_git).ok()?;
+    let target = contents.trim().strip_prefix("gitdir:")?.trim();
+    Some(src.join(target))
 }
 
 /// Clone ghostty at the pinned commit into OUT_DIR/ghostty-src.
