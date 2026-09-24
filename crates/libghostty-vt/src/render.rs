@@ -334,6 +334,13 @@ impl<'alloc> RenderState<'alloc> {
         Ok(Snapshot(self))
     }
 
+    /// The render state as of its last [update](Self::update), without
+    /// consuming any terminal dirty state: a frame captured when a render hold
+    /// began (see [`Terminal::on_render_hold`]) is read back through this.
+    pub fn snapshot(&mut self) -> Snapshot<'alloc, '_> {
+        Snapshot(self)
+    }
+
     /// Begin an update of a render state instance from a terminal.
     ///
     /// Every begin must be completed with [`Update::end`] before the render
