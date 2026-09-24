@@ -2092,6 +2092,25 @@ handlers! {
     ) |term, func| {
         func(&term, unsafe { ProgressReport::from_raw(progress) });
     }
+
+    /// Call the given function when the running program starts a render
+    /// hold (`true`) or ends one (`false`). Today a hold is synchronized
+    /// output (mode 2026). When a hold begins the terminal holds exactly the
+    /// frame the program wants left on screen, and nothing after the start
+    /// of the hold has been processed yet, so this is where to capture it
+    /// with [`RenderState::update`](crate::RenderState::update).
+    ///
+    /// The terminal has no clock and never ends a hold on its own: end one
+    /// that lasts too long with [`Terminal::set_mode`], which does not call
+    /// this back.
+    pub fn on_render_hold(
+        &mut self,
+        tag = RENDER_HOLD,
+        from = GhosttyTerminalRenderHoldFn(held: bool),
+        to = RenderHoldFn(bool),
+    ) |term, func| {
+        func(&term, held);
+    }
 }
 
 #[cfg(test)]
@@ -2165,6 +2184,31 @@ mod tests {
             // so it now owns exactly one initialized T allocation.
             (Box::from_raw(dst_ptr), src_addr, dst_addr)
         }
+    }
+
+    /// A hold begins and ends with mode 2026, the callback sees the frame
+    /// from before the hold, and resetting the mode by hand is silent.
+    #[test]
+    fn render_hold_reports_mode_2026_and_sees_the_finished_frame() {
+        let holds: RefCell<Vec<(bool, u16)>> = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new(20, 4).expect("terminal should initialize");
+        terminal
+            .on_render_hold(|term, held| {
+                let x = term.cursor_x().expect("cursor_x inside callback");
+                holds.borrow_mut().push((held, x));
+            })
+            .expect("callback should register");
+
+        terminal.vt_write(b"done\x1b[?2026hhalf");
+        assert_eq!(*holds.borrow(), [(true, 4)], "captured before `half`");
+        terminal.vt_write(b"\x1b[?2026h");
+        assert_eq!(holds.borrow().len(), 1, "setting the mode again is no new hold");
+        terminal.vt_write(b"\x1b[?2026l");
+        assert_eq!(holds.borrow().last(), Some(&(false, 8)));
+
+        terminal.vt_write(b"\x1b[?2026h");
+        terminal.set_mode(Mode::SYNC_OUTPUT, false).expect("set_mode");
+        assert_eq!(holds.borrow().len(), 3, "ending a hold by hand is not reported");
     }
 
     /// Send an OSC 2 title sequence, then verify `term.title()` returns the
