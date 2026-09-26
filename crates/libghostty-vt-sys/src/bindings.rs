@@ -3385,6 +3385,38 @@ pub mod RenderStateCursorVisualStyle {
     #[doc = " Hollow block cursor."]
     pub const MAX_VALUE: Type = 2147483647;
 }
+#[doc = " A number of rows above and below the viewport.\n\n This is used both to request overscan with\n GHOSTTY_RENDER_STATE_OPTION_OVERSCAN and to report how many rows an\n update captured with GHOSTTY_RENDER_STATE_DATA_OVERSCAN. See \"Overscan\"\n in the render state overview for how the extra rows are used.\n"]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct RenderStateOverscan {
+    #[doc = " Rows above the top of the viewport."]
+    pub above: u16,
+    #[doc = " Rows below the bottom of the viewport."]
+    pub below: u16,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of RenderStateOverscan"][::std::mem::size_of::<RenderStateOverscan>() - 4usize];
+    ["Alignment of RenderStateOverscan"][::std::mem::align_of::<RenderStateOverscan>() - 2usize];
+    ["Offset of field: RenderStateOverscan::above"]
+        [::std::mem::offset_of!(RenderStateOverscan, above) - 0usize];
+    ["Offset of field: RenderStateOverscan::below"]
+        [::std::mem::offset_of!(RenderStateOverscan, below) - 2usize];
+};
+#[doc = " The identity of a row across render state updates.\n\n Treat this value as opaque. Two ids are the same when both words are\n equal. No other comparison or interpretation is meaningful, and the\n contents may change between library versions. A zero-initialized id is\n never valid, so it can be used to mean \"no row\".\n\n bool same = a.bits[0] == b.bits[0] && a.bits[1] == b.bits[1];\n\n See \"Row Identity\" in the render state overview for how to use ids.\n"]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct RenderStateRowId {
+    #[doc = " Opaque id data. Compare both words for equality."]
+    pub bits: [u64; 2usize],
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of RenderStateRowId"][::std::mem::size_of::<RenderStateRowId>() - 16usize];
+    ["Alignment of RenderStateRowId"][::std::mem::align_of::<RenderStateRowId>() - 8usize];
+    ["Offset of field: RenderStateRowId::bits"]
+        [::std::mem::offset_of!(RenderStateRowId, bits) - 0usize];
+};
 pub mod RenderStateData {
     #[doc = " Queryable data kinds for ghostty_render_state_get().\n"]
     pub type Type = ::std::os::raw::c_int;
@@ -3392,11 +3424,11 @@ pub mod RenderStateData {
     pub const INVALID: Type = 0;
     #[doc = " Viewport width in cells (uint16_t)."]
     pub const COLS: Type = 1;
-    #[doc = " Viewport height in cells (uint16_t)."]
+    #[doc = " Viewport height in cells (uint16_t). This does not include\n  overscan rows."]
     pub const ROWS: Type = 2;
     #[doc = " Current dirty state (GhosttyRenderStateDirty)."]
     pub const DIRTY: Type = 3;
-    #[doc = " Populate a pre-allocated GhosttyRenderStateRowIterator with row data\n  from the render state (GhosttyRenderStateRowIterator). Row data is\n  only valid as long as the underlying render state is not updated.\n  It is unsafe to use row data after updating the render state."]
+    #[doc = " Populate a pre-allocated GhosttyRenderStateRowIterator with row data\n  from the render state (GhosttyRenderStateRowIterator). Row data is\n  only valid as long as the underlying render state is not updated.\n  It is unsafe to use row data after updating the render state.\n\n  The iterator visits every row the last update captured, from top\n  to bottom. This is exactly the viewport unless overscan was\n  requested with GHOSTTY_RENDER_STATE_OPTION_OVERSCAN."]
     pub const ROW_ITERATOR: Type = 4;
     #[doc = " Default/current background color (GhosttyColorRgb)."]
     pub const COLOR_BACKGROUND: Type = 5;
@@ -3428,7 +3460,11 @@ pub mod RenderStateData {
     pub const CURSOR: Type = 18;
     #[doc = " All render-state colors in one sized struct (GhosttyRenderStateColors).\n  Initialize the output with GHOSTTY_INIT_SIZED before querying."]
     pub const COLORS: Type = 19;
-    #[doc = " All render-state colors in one sized struct (GhosttyRenderStateColors).\n  Initialize the output with GHOSTTY_INIT_SIZED before querying."]
+    #[doc = " How many overscan rows the last update captured on each side\n  (GhosttyRenderStateOverscan). This is never more than the request.\n  It is less when those rows don't exist: `above` is smaller near the\n  top of the scrollback, and `below` is zero while the viewport is\n  scrolled to the bottom."]
+    pub const OVERSCAN: Type = 20;
+    #[doc = " The overscan request most recently set with\n  GHOSTTY_RENDER_STATE_OPTION_OVERSCAN (GhosttyRenderStateOverscan).\n  The next update uses this request. Both sides are zero if it was\n  never set."]
+    pub const OVERSCAN_REQUEST: Type = 21;
+    #[doc = " The overscan request most recently set with\n  GHOSTTY_RENDER_STATE_OPTION_OVERSCAN (GhosttyRenderStateOverscan).\n  The next update uses this request. Both sides are zero if it was\n  never set."]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod RenderStateOption {
@@ -3436,7 +3472,9 @@ pub mod RenderStateOption {
     pub type Type = ::std::os::raw::c_int;
     #[doc = " Set dirty state (GhosttyRenderStateDirty)."]
     pub const DIRTY: Type = 0;
-    #[doc = " Set dirty state (GhosttyRenderStateDirty)."]
+    #[doc = " Request overscan rows above and below the viewport\n  (GhosttyRenderStateOverscan). The request takes effect on the next\n  update and stays in effect until it is changed. Both sides are zero\n  by default, which captures only the viewport. The rows of the last\n  update can still be read after changing the request. Expect a full\n  redraw on the update after a change. See \"Overscan\" in the render\n  state overview."]
+    pub const OVERSCAN: Type = 1;
+    #[doc = " Request overscan rows above and below the viewport\n  (GhosttyRenderStateOverscan). The request takes effect on the next\n  update and stays in effect until it is changed. Both sides are zero\n  by default, which captures only the viewport. The rows of the last\n  update can still be read after changing the request. Expect a full\n  redraw on the update after a change. See \"Overscan\" in the render\n  state overview."]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod RenderStateRowData {
@@ -3454,7 +3492,11 @@ pub mod RenderStateRowData {
     pub const SELECTION: Type = 4;
     #[doc = " A borrowed view of the raw cell values for the current row\n  (GhosttyCellsView). One value per column, identical to querying\n  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW for each cell. The view\n  is only valid as long as the underlying render state is not\n  updated; it is unsafe to use after updating the render state.\n\n  This is the bulk alternative to iterating cells one at a time.\n  It lets callers with expensive call boundaries (e.g. WebAssembly\n  embedders) read an entire row with a single call.\n\n  Bit positions aren't protected by ABI, so callers should parse them\n  out of the manifest from `ghostty_type_json`. Callers with access\n  to the C header or without high FFI costs should use `ghostty_cell_get`."]
     pub const CELLS_RAW: Type = 5;
-    #[doc = " A borrowed view of the raw cell values for the current row\n  (GhosttyCellsView). One value per column, identical to querying\n  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW for each cell. The view\n  is only valid as long as the underlying render state is not\n  updated; it is unsafe to use after updating the render state.\n\n  This is the bulk alternative to iterating cells one at a time.\n  It lets callers with expensive call boundaries (e.g. WebAssembly\n  embedders) read an entire row with a single call.\n\n  Bit positions aren't protected by ABI, so callers should parse them\n  out of the manifest from `ghostty_type_json`. Callers with access\n  to the C header or without high FFI costs should use `ghostty_cell_get`."]
+    #[doc = " The row's position relative to the top of the viewport (int32_t).\n  Viewport rows are 0 through rows - 1. Overscan rows above the\n  viewport are negative, and overscan rows below it start at rows.\n  Without overscan, this equals the y reported by\n  ghostty_render_state_row_iterator_next_dirty()."]
+    pub const VIEWPORT_Y: Type = 6;
+    #[doc = " The row's identity across updates (GhosttyRenderStateRowId). This\n  works with or without overscan. See \"Row Identity\" in the render\n  state overview."]
+    pub const ID: Type = 7;
+    #[doc = " The row's identity across updates (GhosttyRenderStateRowId). This\n  works with or without overscan. See \"Row Identity\" in the render\n  state overview."]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod RenderStateRowOption {
@@ -3654,11 +3696,11 @@ unsafe extern "C" {
     pub fn ghostty_render_state_row_iterator_free(iterator: RenderStateRowIterator);
 }
 unsafe extern "C" {
-    #[doc = " Move a render-state row iterator to the next row.\n\n Rows are visited contiguously in ascending viewport order, starting at\n y = 0. Returns true if the iterator moved successfully and row data is\n available to read at the new position.\n\n         NULL or if the iterator has reached the end\n"]
+    #[doc = " Move a render-state row iterator to the next row.\n\n Rows are visited in order from top to bottom with no gaps. Without\n overscan, the first row is the top row of the viewport. With overscan,\n the first row is the highest captured row above the viewport (see\n GHOSTTY_RENDER_STATE_OPTION_OVERSCAN). Returns true if the iterator\n moved successfully and row data is available to read at the new\n position.\n\n         NULL or if the iterator has reached the end\n"]
     pub fn ghostty_render_state_row_iterator_next(iterator: RenderStateRowIterator) -> bool;
 }
 unsafe extern "C" {
-    #[doc = " Move a render-state row iterator to the next row requiring a redraw.\n\n If the global dirty state is GHOSTTY_RENDER_STATE_DIRTY_FALSE, this returns\n false. If it is GHOSTTY_RENDER_STATE_DIRTY_PARTIAL, clean rows are skipped.\n If it is GHOSTTY_RENDER_STATE_DIRTY_FULL, every remaining row is returned\n regardless of its per-row dirty flag. Rows are returned in ascending\n viewport order. This function does not clear any dirty state.\n\n                   (NULL returns false); it is not modified when false is\n                   returned\n         is NULL or the iterator has reached the end of the effective dirty\n         rows\n"]
+    #[doc = " Move a render-state row iterator to the next row requiring a redraw.\n\n If the global dirty state is GHOSTTY_RENDER_STATE_DIRTY_FALSE, this returns\n false. If it is GHOSTTY_RENDER_STATE_DIRTY_PARTIAL, clean rows are skipped.\n If it is GHOSTTY_RENDER_STATE_DIRTY_FULL, every remaining row is returned\n regardless of its per-row dirty flag. Rows are returned in ascending\n viewport order. This function does not clear any dirty state.\n\n                   is returned (NULL returns false). It is not modified\n                   when false is returned. Without overscan, this is the\n                   viewport y. With overscan, it counts from the highest\n                   captured row, so use\n                   GHOSTTY_RENDER_STATE_ROW_DATA_VIEWPORT_Y to place\n                   the row.\n         is NULL or the iterator has reached the end of the effective dirty\n         rows\n"]
     pub fn ghostty_render_state_row_iterator_next_dirty(
         iterator: RenderStateRowIterator,
         out_y: *mut u16,
