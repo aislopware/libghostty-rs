@@ -126,8 +126,8 @@ Use `nix develop .#miri` when working interactively with the same toolchain.
 
 ### Running the example
 
-The examples live in their own workspace under `example/`. Run one by
-entering its folder, and run:
+The examples live in their own workspace under `example/`. To run one, enter
+its folder and run:
 
 ```sh
 cargo run
@@ -135,4 +135,6 @@ cargo run
 
 When building with `link-dynamic`, set `LD_LIBRARY_PATH` on Linux or
 `DYLD_LIBRARY_PATH` on macOS to the directory containing the generated
-`libghostty-vt` shared library.
+`libghostty-vt` shared library. The examples have their own target directory,
+so for them it is under `example/target/`, at
+`<profile>/build/libghostty-vt-sys-*/out/ghostty-install/lib`.

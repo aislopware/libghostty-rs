@@ -11,7 +11,8 @@
 
 ## Code Conventions
 
-- Rust workspace: `libghostty-vt-sys` (FFI bindings), `libghostty-vt` (safe wrappers), `ghostling_rs` (example)
+- Root Rust workspace: `libghostty-vt-sys` (FFI bindings), `libghostty-vt` (safe wrappers)
+- Examples workspace (`example/`, own lockfile and `example/target/`): `ghostling_rs`, `grid_ref_tracked_rs`
 - Opaque pointer pattern: `NonNull<ffi::GhosttyFoo>` + `PhantomData<*mut ()>` + `Drop`
 - Sized structs: set `size` field to `std::mem::size_of::<Type>()` before FFI calls
 - `from_result()` maps `GhosttyResult` to `Result<(), Error>`
