@@ -1093,6 +1093,22 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     ///
     /// When this limit is hit, the unknown sequence callback is still invoked,
     /// but with `truncated` set.
+    ///
+    /// Unsupported sequences are buffered in memory until they end, so this
+    /// limit bounds how much memory a single sequence can make the terminal
+    /// allocate. It is the only bound: [`Self::set_apc_max_bytes`] applies to
+    /// recognized protocols, not to unsupported sequences. A nonzero limit
+    /// buffers sequences even when no
+    /// [unknown sequence callback](Self::on_unknown_sequence) is installed;
+    /// they are then discarded when they end.
+    ///
+    /// <div class="warning">
+    ///
+    /// A running program controls when a sequence ends, so a very large limit
+    /// such as `usize::MAX` lets it make the terminal buffer an unterminated
+    /// sequence until allocation fails.
+    ///
+    /// </div>
     pub fn set_unknown_max_bytes(&mut self, max: usize) -> Result<&mut Self> {
         self.set(Opt::UNKNOWN_MAX_BYTES, &max)?;
         Ok(self)
@@ -3144,6 +3160,68 @@ mod tests {
         terminal.vt_write(b"\x1b_unknown\x1b\\");
         drop(terminal);
         assert_eq!(seen.into_inner(), [b"unknown".to_vec()]);
+    }
+
+    /// Stream `payload_len` bytes into an unknown APC that is never
+    /// terminated, returning how many more bytes the terminal holds
+    /// afterwards than before the APC began.
+    fn open_unknown_apc_growth(
+        configure: impl FnOnce(&mut Terminal<'_, '_>),
+        payload_len: usize,
+    ) -> usize {
+        let counting = crate::alloc::testing::Counting::default();
+        let alloc = counting.allocator();
+
+        let mut terminal =
+            Terminal::new_with_alloc(&alloc, 8, 2).expect("terminal should initialize");
+        configure(&mut terminal);
+
+        let before = counting.live();
+        terminal.vt_write(b"\x1b_X");
+        let chunk = [b'x'; 4096];
+        for _ in 0..payload_len / chunk.len() {
+            terminal.vt_write(&chunk);
+        }
+        let growth = counting.live() - before;
+        drop(terminal);
+        growth
+    }
+
+    #[test]
+    fn unknown_apc_capture_memory_is_bounded_only_by_the_limit() {
+        const LIMIT: usize = 64 * 1024;
+        const PAYLOAD: usize = 1024 * 1024;
+        let with_callback = |max| {
+            move |terminal: &mut Terminal<'_, '_>| {
+                terminal
+                    .on_unknown_sequence(|_term, _sequence| {})
+                    .unwrap()
+                    .set_unknown_max_bytes(max)
+                    .unwrap();
+            }
+        };
+
+        // The default of zero buffers nothing, even with a callback.
+        assert_eq!(open_unknown_apc_growth(with_callback(0), PAYLOAD), 0);
+        // An open unknown APC is buffered up to the limit, and no further.
+        assert_eq!(
+            open_unknown_apc_growth(with_callback(LIMIT), PAYLOAD),
+            LIMIT
+        );
+        // Capture buffers even when no callback will ever see the result.
+        let without_callback = |terminal: &mut Terminal<'_, '_>| {
+            terminal.set_unknown_max_bytes(LIMIT).unwrap();
+        };
+        assert_eq!(open_unknown_apc_growth(without_callback, PAYLOAD), LIMIT);
+        // The APC buffer limit for recognized protocols doesn't apply.
+        let apc_limited = |terminal: &mut Terminal<'_, '_>| {
+            with_callback(LIMIT)(terminal);
+            terminal.set_apc_max_bytes(Some(16)).unwrap();
+        };
+        assert_eq!(open_unknown_apc_growth(apc_limited, PAYLOAD), LIMIT);
+        // Nothing else bounds it: without a real limit, the buffer grows
+        // with the input.
+        assert!(open_unknown_apc_growth(with_callback(usize::MAX), PAYLOAD) >= PAYLOAD);
     }
 
     #[test]
