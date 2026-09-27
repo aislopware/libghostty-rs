@@ -386,6 +386,17 @@ mod tests {
         assert_eq!(reads, ["text/plain"]);
         assert_eq!(*output.borrow(), b"a b");
 
+        // With several text representations, only the first one is read.
+        let mimes = [
+            ClipboardMime::new("image/png"),
+            ClipboardMime::new("UTF8_STRING"),
+            ClipboardMime::new("text/plain"),
+        ];
+        let (result, reads) = paste(&mut terminal, &output, Options::new(), &mimes, b"hi");
+        assert!(result.unwrap());
+        assert_eq!(reads, ["UTF8_STRING"]);
+        assert_eq!(*output.borrow(), b"hi");
+
         // A newline could inject a command, so it needs confirmation.
         let (result, _) = paste(&mut terminal, &output, Options::new(), &TEXT, b"a\nb");
         assert!(matches!(result, Err(Error::Rejected)));
@@ -507,12 +518,32 @@ mod tests {
             .into_bytes()
         );
 
-        // The program's follow-up read with that password is already granted.
-        // Per the spec, a password only counts together with a name ("app").
-        terminal.vt_write(
-            format!("\x1b]5522;type=read:id=r:name=YXBw:pw={pw};dGV4dC9wbGFpbg==\x1b\\").as_bytes(),
+        // The program's follow-up read with that password is already granted,
+        // once. The controls around it make sure `granted` really reflects the
+        // password: per the spec a password only counts together with a name
+        // ("app"), so without one it is ignored (and the grant left intact); a
+        // different password is not granted; and the one-time grant is
+        // consumed by its first use, so repeating the read is not granted.
+        let read = |name: &str, pw: &str| {
+            format!("\x1b]5522;type=read:id=r{name}:pw={pw};dGV4dC9wbGFpbg==\x1b\\")
+        };
+        terminal.vt_write(read("", &pw).as_bytes());
+        // "other"
+        terminal.vt_write(read(":name=YXBw", "b3RoZXI=").as_bytes());
+        terminal.vt_write(read(":name=YXBw", &pw).as_bytes());
+        terminal.vt_write(read(":name=YXBw", &pw).as_bytes());
+        assert_eq!(*granted.borrow(), [false, false, true, false]);
+
+        // An event never puts the text on the input stream, so text that
+        // would be unsafe unbracketed is not rejected, and is not even read.
+        let (result, reads) = paste(&mut terminal, &output, Options::new(), &TEXT, b"a\n");
+        assert!(result.unwrap());
+        assert!(reads.is_empty());
+        assert!(
+            output
+                .borrow()
+                .starts_with(b"\x1b]5522;type=read:status=OK:pw=")
         );
-        assert_eq!(*granted.borrow(), [true]);
 
         // Other locations are reported as the primary selection.
         let options = Options::new().with_location(ClipboardLocation::Selection);
