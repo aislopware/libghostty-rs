@@ -144,15 +144,6 @@ use crate::{
 /// second.select_next(&mut terminal).unwrap();
 /// snapshot.selected_match().unwrap();
 /// ```
-///
-/// <div class="warning">
-///
-/// Dropping a search that is still bound to a live terminal releases tracked
-/// state within that terminal, so do not drop a search from within one of its
-/// terminal's [effect callbacks](Terminal#effects), while the terminal is
-/// processing input.
-///
-/// </div>
 #[derive(Debug)]
 pub struct Search<'alloc> {
     inner: Object<'alloc, ffi::SearchImpl>,
@@ -457,6 +448,19 @@ impl Drop for Search<'_> {
     fn drop(&mut self) {
         // SAFETY: libghostty releases tracked state within a live terminal,
         // or only search-owned memory once the terminal was freed.
+        //
+        // Releasing that state must be serialized with all other access to
+        // the terminal. The terminal is not shared across threads, so the
+        // only other access that can be in progress is a VT write, when a
+        // search is dropped from one of the terminal's effect callbacks. That
+        // is fine too: releasing only unregisters the search from the
+        // terminal and untracks its pins. Effect callbacks are invoked by the
+        // stream handler while it handles a sequence, never from within a
+        // page list operation, so the terminal isn't iterating its searches
+        // or tracked pins at that point, and it never holds on to the pins
+        // this search owns. Upstream likewise only forbids re-entering VT
+        // writes from callbacks, and expects other terminal calls, such as
+        // updating a render state, to be made from them.
         unsafe { ffi::ghostty_search_free(self.inner.as_raw()) };
     }
 }
@@ -888,5 +892,32 @@ mod tests {
         // Everything else still works, reporting what the search last saw.
         assert_eq!(search.status().unwrap(), Status::Running);
         assert_eq!(search.needle().unwrap(), Some(&b"hit"[..]));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn search_can_be_dropped_from_an_effect_callback() {
+        let alloc = crate::alloc::testing::Guard::allocator();
+        let slot = std::cell::RefCell::new(None);
+        let mut terminal = Terminal::new_with_alloc(&alloc, 10, 3).unwrap();
+        terminal
+            .on_bell(|_| drop(slot.borrow_mut().take()))
+            .unwrap();
+        *slot.borrow_mut() = Some(history_search(&mut terminal));
+
+        // Release the search's tracked pins in the middle of a write that
+        // keeps growing the scrollback.
+        let mut input = b"\x07".to_vec();
+        for _ in 0..5000 {
+            input.extend_from_slice(b"hit\r\n");
+        }
+        terminal.vt_write(&input);
+        assert!(slot.borrow().is_none());
+
+        // The terminal's remaining tracked state is intact.
+        let mut search = Search::new(&mut terminal).unwrap();
+        search.set_needle(&mut terminal, b"hit").unwrap();
+        search.run(&mut terminal).unwrap();
+        assert!(search.total_matches().unwrap() > 5000);
     }
 }
