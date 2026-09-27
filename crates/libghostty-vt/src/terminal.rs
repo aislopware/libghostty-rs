@@ -3042,9 +3042,12 @@ mod tests {
         assert_eq!(written, [b"Hello".to_vec()]);
     }
 
-    /// Feed `input` to a terminal capturing unknown sequences up to `max`
-    /// bytes, returning each captured APC as `(content, truncated)`.
-    fn unknown_apcs(max: usize, input: &[u8]) -> Vec<(Vec<u8>, bool)> {
+    /// Feed `input` to a terminal with an unknown sequence callback,
+    /// returning each captured APC as `(content, truncated)`.
+    ///
+    /// `max` is passed to [`Terminal::set_unknown_max_bytes`]; `None` never
+    /// calls it, leaving the built-in default in place.
+    fn unknown_apcs(max: Option<usize>, input: &[u8]) -> Vec<(Vec<u8>, bool)> {
         let seen = RefCell::new(Vec::new());
         let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
         terminal
@@ -3052,9 +3055,12 @@ mod tests {
                 let UnknownSequence::Apc { content, truncated } = sequence;
                 seen.borrow_mut().push((content.to_vec(), truncated));
             })
-            .expect("callback should register")
-            .set_unknown_max_bytes(max)
-            .expect("limit should be settable");
+            .expect("callback should register");
+        if let Some(max) = max {
+            terminal
+                .set_unknown_max_bytes(max)
+                .expect("limit should be settable");
+        }
         terminal.vt_write(input);
         drop(terminal);
         seen.into_inner()
@@ -3063,13 +3069,33 @@ mod tests {
     #[test]
     fn unknown_apc_capture_is_opt_in_and_bounded() {
         let apc = b"\x1b_unknown\x1b\\";
-        // Installing the callback alone captures nothing.
-        assert!(unknown_apcs(0, apc).is_empty());
+        // Installing the callback alone captures nothing: the default limit
+        // is zero.
+        assert!(unknown_apcs(None, apc).is_empty());
+        // Neither does an explicit zero limit.
+        assert!(unknown_apcs(Some(0), apc).is_empty());
         // Content under the limit arrives whole, without the introducer and
         // terminator.
-        assert_eq!(unknown_apcs(64, apc), [(b"unknown".to_vec(), false)]);
+        assert_eq!(unknown_apcs(Some(64), apc), [(b"unknown".to_vec(), false)]);
+        // Content exactly at the limit fits, so it isn't truncated.
+        assert_eq!(unknown_apcs(Some(7), apc), [(b"unknown".to_vec(), false)]);
         // Content over the limit is still reported, but truncated.
-        assert_eq!(unknown_apcs(3, apc), [(b"unk".to_vec(), true)]);
+        assert_eq!(unknown_apcs(Some(3), apc), [(b"unk".to_vec(), true)]);
+    }
+
+    #[test]
+    fn unknown_apc_identifiers_are_reported_whole() {
+        // A prefix of a known identifier (`25a1`, Glyph Protocol) cut short
+        // by `;` is unknown, and the prefix and `;` are kept.
+        assert_eq!(
+            unknown_apcs(Some(64), b"\x1b_25;x\x1b\\"),
+            [(b"25;x".to_vec(), false)]
+        );
+        // So is an identifier that runs past the longest known one.
+        assert_eq!(
+            unknown_apcs(Some(64), b"\x1b_25a1X;y\x1b\\"),
+            [(b"25a1X;y".to_vec(), false)]
+        );
     }
 
     #[test]
@@ -3091,25 +3117,33 @@ mod tests {
     #[test]
     fn only_unsupported_sequences_are_reported() {
         // An aborted sequence (CAN) is ignored.
-        assert!(unknown_apcs(64, b"\x1b_unknown\x18").is_empty());
-        // A garbage Kitty graphics command is malformed, not unknown.
-        assert!(unknown_apcs(64, b"\x1b_Gabcdef1234\x1b\\").is_empty());
+        assert!(unknown_apcs(Some(64), b"\x1b_unknown\x18").is_empty());
+        // Any APC starting with `G` belongs to Kitty graphics, so even a
+        // garbage command never reaches unknown capture.
+        assert!(unknown_apcs(Some(64), b"\x1b_Gabcdef1234\x1b\\").is_empty());
         // An incomplete known protocol identifier is malformed, not unknown.
-        assert!(unknown_apcs(64, b"\x1b_25a\x1b\\").is_empty());
+        assert!(unknown_apcs(Some(64), b"\x1b_25a\x1b\\").is_empty());
 
         // An explicitly disabled known protocol is ignored as well.
-        let seen = RefCell::new(0);
+        let seen = RefCell::new(Vec::new());
         let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
         terminal
-            .on_unknown_sequence(|_term, _sequence| *seen.borrow_mut() += 1)
+            .on_unknown_sequence(|_term, sequence| {
+                let UnknownSequence::Apc { content, .. } = sequence;
+                seen.borrow_mut().push(content.to_vec());
+            })
             .unwrap()
             .set_unknown_max_bytes(64)
             .unwrap()
             .set_glyph_protocol_enabled(false)
             .unwrap();
         terminal.vt_write(b"\x1b_25a1;q;cp=E0A0\x1b\\");
+        // Positive control: the same terminal still reports an unknown APC,
+        // so the Glyph Protocol APC above was skipped, not lost to a
+        // misconfigured callback.
+        terminal.vt_write(b"\x1b_unknown\x1b\\");
         drop(terminal);
-        assert_eq!(seen.into_inner(), 0);
+        assert_eq!(seen.into_inner(), [b"unknown".to_vec()]);
     }
 
     #[test]
