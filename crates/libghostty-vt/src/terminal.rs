@@ -306,7 +306,8 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     ///
     /// Changes the number of columns and rows in the terminal. The primary
     /// screen will reflow content if wraparound mode is enabled; the alternate
-    /// screen does not reflow. If the dimensions are unchanged, this is a no-op.
+    /// screen does not reflow. If the dimensions are unchanged, the grid is
+    /// left untouched, but everything below still happens.
     ///
     /// This also updates the terminal's pixel dimensions (used for image
     /// protocols and size reports), disables synchronized output mode (allowed
@@ -314,7 +315,8 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     /// in-band size report if mode 2048 is enabled.
     ///
     /// If synchronized output was enabled, the [render hold](Self::on_render_hold)
-    /// callback is invoked to report that the hold ended.
+    /// callback is invoked to report that the hold ended, even if the
+    /// dimensions are unchanged.
     pub fn resize(
         &mut self,
         cols: u16,
