@@ -2067,6 +2067,20 @@ handlers! {
     /// callback, then stop updating the render state until the hold ends. You
     /// can keep drawing the render state in the meantime. It won't change.
     ///
+    /// <div class="warning">
+    ///
+    /// The callback runs inside an `extern "C"` function, so a panic in it
+    /// aborts the process. If the callback updates the render state, don't
+    /// keep the render state borrowed (e.g. through a
+    /// [`Snapshot`](crate::render::Snapshot) or a
+    /// [`RefMut`](std::cell::RefMut)) across [`Terminal::vt_write`],
+    /// [`Terminal::reset`] or [`Terminal::resize`], since any of them can
+    /// invoke the callback. Use a non-panicking borrow such as
+    /// [`RefCell::try_borrow_mut`](std::cell::RefCell::try_borrow_mut)
+    /// inside the callback.
+    ///
+    /// </div>
+    ///
     /// ```rust
     /// use std::cell::{Cell, RefCell};
     /// use libghostty_vt::{RenderState, Terminal};
@@ -2074,21 +2088,26 @@ handlers! {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let render_state = RefCell::new(RenderState::new()?);
     /// let held = Cell::new(false);
+    /// let captured = Cell::new(false);
     ///
     /// let mut terminal = Terminal::new(80, 24)?;
     /// terminal.on_render_hold(|term, is_held| {
     ///     if is_held {
-    ///         // Capture the frame the program wants left on screen.
-    ///         render_state
-    ///             .borrow_mut()
-    ///             .update(term)
-    ///             .expect("render state update failed");
+    ///         // Capture the frame the program wants left on screen. Don't
+    ///         // panic if that fails: the render state may be borrowed
+    ///         // elsewhere, or the update may run out of memory. Remember
+    ///         // the failure instead and keep drawing the previous frame.
+    ///         let ok = render_state
+    ///             .try_borrow_mut()
+    ///             .is_ok_and(|mut state| state.update(term).is_ok());
+    ///         captured.set(ok);
     ///     }
     ///     held.set(is_held);
     /// })?;
     ///
     /// terminal.vt_write(b"\x1b[?2026h");
     /// assert!(held.get());
+    /// assert!(captured.get());
     /// // During a hold, skip the update and draw the captured frame.
     ///
     /// terminal.vt_write(b"\x1b[?2026l");
