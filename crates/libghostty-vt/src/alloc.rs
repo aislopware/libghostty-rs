@@ -512,6 +512,98 @@ pub(crate) mod testing {
         // SAFETY: `mem` was allocated from the global heap with this layout.
         unsafe { std::alloc::dealloc(mem.cast(), layout(len, alignment)) };
     }
+
+    /// An allocator that turns use-after-free inside libghostty into a
+    /// deterministic crash.
+    ///
+    /// `AddressSanitizer` doesn't instrument Zig code, so it can't see
+    /// libghostty reading memory it already freed. Instead, every allocation
+    /// gets its own mapping, and freeing it revokes all access to the mapping
+    /// without ever unmapping it, so the address can't be reused either.
+    #[cfg(unix)]
+    pub(crate) struct Guard;
+
+    #[cfg(unix)]
+    impl Guard {
+        pub(crate) fn allocator() -> Allocator<'static> {
+            static VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
+                alloc: Some(guard_pages::alloc),
+                resize: Some(no_resize),
+                remap: Some(no_remap),
+                free: Some(guard_pages::free),
+            };
+            allocator(&(), &VTABLE)
+        }
+    }
+
+    #[cfg(unix)]
+    mod guard_pages {
+        use std::ffi::{c_int, c_void};
+
+        unsafe extern "C" {
+            fn mmap(
+                addr: *mut c_void,
+                len: usize,
+                prot: c_int,
+                flags: c_int,
+                fd: c_int,
+                offset: i64,
+            ) -> *mut c_void;
+            fn mprotect(addr: *mut c_void, len: usize, prot: c_int) -> c_int;
+        }
+
+        const PROT_NONE: c_int = 0;
+        const PROT_READ_WRITE: c_int = 0x1 | 0x2;
+        const MAP_PRIVATE: c_int = 0x2;
+        #[cfg(target_os = "linux")]
+        const MAP_ANON: c_int = 0x20;
+        #[cfg(not(target_os = "linux"))]
+        const MAP_ANON: c_int = 0x1000;
+        const MAP_FAILED: *mut c_void = usize::MAX as *mut c_void;
+        // Every page size we run on is a multiple of this, so mappings are
+        // always aligned at least this much.
+        const PAGE: usize = 4096;
+
+        pub(super) unsafe extern "C" fn alloc(
+            _ctx: *mut c_void,
+            len: usize,
+            alignment: u8,
+            _ret_addr: usize,
+        ) -> *mut c_void {
+            if 1usize << alignment > PAGE {
+                return std::ptr::null_mut();
+            }
+            // SAFETY: A fresh anonymous mapping has no preconditions.
+            let mem = unsafe {
+                mmap(
+                    std::ptr::null_mut(),
+                    len.max(1),
+                    PROT_READ_WRITE,
+                    MAP_PRIVATE | MAP_ANON,
+                    -1,
+                    0,
+                )
+            };
+            if mem == MAP_FAILED {
+                std::ptr::null_mut()
+            } else {
+                mem
+            }
+        }
+
+        pub(super) unsafe extern "C" fn free(
+            _ctx: *mut c_void,
+            mem: *mut c_void,
+            len: usize,
+            _alignment: u8,
+            _ret_addr: usize,
+        ) {
+            // SAFETY: `mem` is the start of a mapping of at least `len` bytes
+            // made by `alloc`.
+            let result = unsafe { mprotect(mem, len.max(1), PROT_NONE) };
+            assert_eq!(result, 0, "mprotect failed");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -74,6 +74,7 @@ fn replacing_and_freeing_original_rejects_new_terminal() {
     let original = std::mem::replace(&mut terminal, Terminal::new(8, 2).unwrap());
     drop(original);
     rejects_wrong_terminal(&mut search, &mut terminal);
+    assert!(matches!(search.tick(), Err(Error::InvalidValue)));
     // The original search stays rejected even once another search is bound
     // to the replacement.
     let replacement_search = fixture(&mut terminal);
@@ -92,6 +93,9 @@ fn multiple_searches_share_identity_and_detach_on_terminal_drop() {
     assert!(second.select_next(&mut terminal).unwrap());
     first.feed(&mut terminal).unwrap();
     drop(terminal);
+    // Ticking needs the terminal too, even though it doesn't borrow it.
+    assert!(matches!(first.tick(), Err(Error::InvalidValue)));
+    assert!(matches!(second.tick(), Err(Error::InvalidValue)));
     drop(first);
     drop(second);
 }

@@ -22,7 +22,7 @@
 //! directly:
 //!
 //! - [`Search::tick`] makes a bounded amount of progress on data the search
-//!   has already copied. It never touches the terminal.
+//!   has already copied, without borrowing the terminal.
 //! - [`Search::feed`] reads the terminal to copy in more data and pick up
 //!   terminal changes. Feeding is the only way the search learns that the
 //!   terminal changed, so keep feeding periodically while the search is in
@@ -60,10 +60,10 @@
 //! The search and its terminal can be dropped in either order. Dropping the
 //! search first releases tracked state it holds within the terminal. If the
 //! terminal is dropped first, the search detects this: calls that need the
-//! terminal return [`Error::InvalidValue`], reads return whatever the search
-//! last saw, and dropping the search releases only search-owned memory. A
-//! search cannot be rebound, so searching another terminal means creating a
-//! new search.
+//! terminal, and [`Search::tick`], return [`Error::InvalidValue`], reads
+//! return whatever the search last saw, and dropping the search releases only
+//! search-owned memory. A search cannot be rebound, so searching another
+//! terminal means creating a new search.
 //!
 //! # Example
 //!
@@ -160,7 +160,8 @@ pub struct Search<'alloc> {
     // enough to reject a different live terminal. A terminal allocated later at
     // the same address cannot be mistaken for the original either: freeing the
     // original detached this search, so libghostty rejects every call that
-    // would touch the new one, and every match is read after such a call.
+    // would touch the new one, ticks included, and every match is read after
+    // such a call.
     terminal: ffi::Terminal,
 }
 
@@ -168,7 +169,7 @@ pub struct Search<'alloc> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, int_enum::IntEnum)]
 #[repr(i32)]
 pub enum Status {
-    /// [`Search::tick`] can make progress without terminal access.
+    /// [`Search::tick`] can make progress without feeding.
     Running = ffi::SearchStatus::RUNNING,
     /// Blocked until [`Search::feed`]. This is also the state right after a
     /// needle is set, since the search has not yet seen the terminal.
@@ -306,13 +307,17 @@ impl<'alloc> Search<'alloc> {
 
     /// Make a bounded amount of search progress, returning the new status.
     ///
-    /// This only works on data the search has already copied and never reads
-    /// the terminal. Call it in a loop while the status is
+    /// This only works on data the search has already copied, so it doesn't
+    /// need to borrow the terminal. Call it in a loop while the status is
     /// [`Status::Running`]. When the status becomes [`Status::FeedRequired`],
     /// call [`Self::feed`] to unblock it.
+    ///
+    /// Returns [`Error::InvalidValue`] after the terminal was dropped.
     pub fn tick(&mut self) -> Result<Status> {
         let mut status = ffi::SearchStatus::COMPLETE;
-        // SAFETY: Ticking only touches search-owned memory.
+        // SAFETY: libghostty rejects ticking a search whose terminal was
+        // freed, since ticking a scrollback search reads a pin the terminal
+        // tracks. Otherwise, ticking only touches search-owned memory.
         from_result(unsafe { ffi::ghostty_search_tick(self.inner.as_raw(), &raw mut status) })?;
         status.try_into().map_err(|_| Error::InvalidValue)
     }
@@ -842,5 +847,46 @@ mod tests {
         }
         // Reading the same number of matches again didn't reallocate.
         assert_eq!(storage.inner.as_ptr(), allocation);
+    }
+
+    /// Fill a terminal with enough matching lines that the search has
+    /// scrollback history to search, not just the active area.
+    #[cfg(unix)]
+    fn history_search(terminal: &mut Terminal<'_, '_>) -> Search<'static> {
+        for _ in 0..5000 {
+            terminal.vt_write(b"hit\r\n");
+        }
+        let mut search = Search::new(terminal).unwrap();
+        search.set_needle(terminal, b"hit").unwrap();
+        // Feeding searches the active area and hands the history searcher
+        // its first page, which the next tick searches.
+        search.feed(terminal).unwrap();
+        assert_eq!(search.status().unwrap(), Status::Running);
+        search
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ticking_after_terminal_drop_is_rejected() {
+        let alloc = crate::alloc::testing::Guard::allocator();
+
+        // Make sure the search really has history to tick through. Without
+        // it, ticking would complete without touching anything, instead of
+        // blocking on the next history feed.
+        let mut terminal = Terminal::new_with_alloc(&alloc, 10, 3).unwrap();
+        let mut search = history_search(&mut terminal);
+        assert_eq!(search.tick().unwrap(), Status::FeedRequired);
+        drop(search);
+        drop(terminal);
+
+        // Ticking the history search reads a pin tracked by the terminal, so
+        // it must not happen once the terminal is gone.
+        let mut terminal = Terminal::new_with_alloc(&alloc, 10, 3).unwrap();
+        let mut search = history_search(&mut terminal);
+        drop(terminal);
+        assert!(matches!(search.tick(), Err(Error::InvalidValue)));
+        // Everything else still works, reporting what the search last saw.
+        assert_eq!(search.status().unwrap(), Status::Running);
+        assert_eq!(search.needle().unwrap(), Some(&b"hit"[..]));
     }
 }
