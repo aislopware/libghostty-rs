@@ -3,7 +3,10 @@
 # workspace's lockfile, metadata and `--workspace` builds, while still letting
 # them share one lockfile. They are never published.
 [workspace]
-members = ["*"]
+# Listed explicitly rather than as a `*` glob: the glob also matches
+# example/target/ once anything has been built, and Cargo then refuses to
+# load the workspace at all.
+members = ["ghostling_rs", "grid_ref_tracked_rs"]
 resolver = "2"
 
 [workspace.package]
