@@ -327,9 +327,11 @@ impl<'alloc, 'r> Decoder<'alloc, 'r> {
         let mut raw: ffi::Terminal = std::ptr::null_mut();
         let result = unsafe { ffi::ghostty_snapshot_decoder_ready(self.inner.as_raw(), &mut raw) };
         from_result(result)?;
+        let terminal = unsafe { Terminal::from_raw(raw)? };
         Ok(IncrementalDecoder {
             decoder: self,
-            terminal: unsafe { Terminal::from_raw(raw)? },
+            ready_terminal: terminal.inner.as_raw(),
+            terminal,
         })
     }
 
@@ -457,6 +459,17 @@ pub struct IncrementalDecoder<'alloc, 'r, 'cb> {
     // First drop the decoder, then the terminal.
     decoder: Decoder<'alloc, 'r>,
     terminal: Terminal<'alloc, 'cb>,
+    // The handle returned by READY. libghostty retains it inside the decoder
+    // and writes history into it on every `next` call, but `terminal_mut` lets
+    // safe code swap `terminal` for another one (e.g. via `std::mem::replace`)
+    // and drop the original. `next` checks this against `terminal` so it only
+    // lets libghostty touch the handle while we own it.
+    //
+    // A replacement allocated at the freed original's address passes this
+    // check. That is still memory-safe: the retained handle then points at the
+    // live terminal we hold, and libghostty looks up its screens anew on every
+    // `next` call, dropping history that no longer fits them.
+    ready_terminal: ffi::Terminal,
 }
 
 impl<'alloc, 'r, 'cb> IncrementalDecoder<'alloc, 'r, 'cb> {
@@ -474,10 +487,22 @@ impl<'alloc, 'r, 'cb> IncrementalDecoder<'alloc, 'r, 'cb> {
     /// consumed and validated and progress reports zero rows. The decoder
     /// applies history to the terminal produced by its READY operation.
     ///
+    /// If that terminal has been replaced through
+    /// [`IncrementalDecoder::terminal_mut`] (e.g. with [`std::mem::replace`]),
+    /// this returns [`Error::InvalidValue`] without consuming input. Putting
+    /// the READY terminal back allows decoding to continue.
+    ///
     /// A decoding error invalidates the decoder's source position. The terminal
     /// remains usable with its already-restored history, but the decoder can
     /// only be dropped.
     pub fn next<'d>(&'d mut self) -> Result<Option<Progress<'alloc, 'r, 'd>>> {
+        // libghostty applies history to the handle it retained at READY, not to
+        // whatever terminal we hold now. If we no longer hold the READY
+        // terminal, it may already have been freed, so calling into
+        // libghostty would be a use-after-free.
+        if self.terminal.inner.as_raw() != self.ready_terminal {
+            return Err(Error::InvalidValue);
+        }
         let result = unsafe { ffi::ghostty_snapshot_decoder_next(self.decoder.inner.as_raw()) };
         from_optional_result(
             result,
@@ -492,6 +517,9 @@ impl<'alloc, 'r, 'cb> IncrementalDecoder<'alloc, 'r, 'cb> {
         &self.terminal
     }
     /// Return an exclusive reference to the terminal being decoded.
+    ///
+    /// Replacing the terminal behind this reference makes
+    /// [`IncrementalDecoder::next`] fail until the original is put back.
     pub fn terminal_mut(&mut self) -> &mut Terminal<'alloc, 'cb> {
         &mut self.terminal
     }
@@ -552,6 +580,72 @@ mod tests {
         let mut buf = [0; 16];
         let len = terminal.continuation_buf(&mut buf).unwrap()?;
         Some(buf[..len].to_vec())
+    }
+
+    /// A snapshot of an 80x24 terminal with enough scrollback that some of it
+    /// is encoded as HISTORY pages after READY, so that
+    /// [`IncrementalDecoder::next`] has something to apply.
+    fn snapshot_with_history() -> Vec<u8> {
+        let mut terminal = Terminal::new(80, 24).unwrap();
+        for i in 0..5000 {
+            terminal.vt_write(format!("line {i}\r\n").as_bytes());
+        }
+        let mut bytes = Vec::new();
+        terminal.encode_snapshot(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn next_restores_history() {
+        let bytes = snapshot_with_history();
+        let mut incremental = Decoder::new_buf(&bytes).unwrap().ready().unwrap();
+        let mut rows = 0;
+        while let Some(progress) = incremental.next().unwrap() {
+            rows += progress.rows().unwrap();
+        }
+        assert!(rows > 0);
+    }
+
+    /// Swapping the READY terminal out of the incremental decoder and dropping
+    /// it must not let [`IncrementalDecoder::next`] write into the freed
+    /// terminal.
+    #[test]
+    #[cfg(unix)]
+    fn next_after_swapping_out_the_terminal_is_not_a_use_after_free() {
+        let bytes = snapshot_with_history();
+        let alloc = crate::alloc::testing::Guard::allocator();
+
+        let decoder = Decoder::new_buf_with_alloc(&alloc, &bytes).unwrap();
+        let mut incremental = decoder.ready().unwrap();
+
+        let original = std::mem::replace(
+            incremental.terminal_mut(),
+            Terminal::new_with_alloc(&alloc, 80, 24).unwrap(),
+        );
+        drop(original);
+
+        // The READY terminal is gone, so libghostty must not be asked to
+        // write history into it.
+        assert!(matches!(incremental.next(), Err(Error::InvalidValue)));
+    }
+
+    #[test]
+    fn next_resumes_once_the_ready_terminal_is_put_back() {
+        let bytes = snapshot_with_history();
+        let mut incremental = Decoder::new_buf(&bytes).unwrap().ready().unwrap();
+
+        let original =
+            std::mem::replace(incremental.terminal_mut(), Terminal::new(80, 24).unwrap());
+        assert!(matches!(incremental.next(), Err(Error::InvalidValue)));
+
+        // The rejected call consumed nothing, so decoding carries on as if the
+        // swap never happened.
+        *incremental.terminal_mut() = original;
+        let mut rows = 0;
+        while let Some(progress) = incremental.next().unwrap() {
+            rows += progress.rows().unwrap();
+        }
+        assert!(rows > 0);
     }
 
     #[test]
