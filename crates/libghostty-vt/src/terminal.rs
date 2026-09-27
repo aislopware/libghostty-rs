@@ -73,7 +73,10 @@ pub use ffi::{SizeReportSize, TerminalScrollbar as Scrollbar};
 /// possibly other parameters. Some examples include [`Terminal::on_bell`]
 /// and [`Terminal::on_pty_write`].
 ///
-/// All callbacks are invoked synchronously during [`Terminal::vt_write`].
+/// All callbacks are invoked synchronously, mostly during
+/// [`Terminal::vt_write`]. A few also fire from [`Terminal::reset`] and
+/// [`Terminal::resize`], such as [`Terminal::on_render_hold`] and the
+/// in-band size report sent through [`Terminal::on_pty_write`].
 /// Callbacks must be very careful to not block for too long or perform
 /// expensive operations, since they are blocking further IO processing.
 ///
@@ -1894,9 +1897,13 @@ macro_rules! handlers {
                     // SAFETY: USERDATA is set to the boxed VTable pointee
                     // (derived from a mutable reference for write provenance)
                     // before the callback is registered. ghostty invokes
-                    // callbacks synchronously during vt_write, so the VTable
-                    // remains alive and exclusively accessed for the duration
-                    // of this call.
+                    // callbacks synchronously from vt_write, reset and
+                    // resize. All three take `&mut self`, so the VTable
+                    // outlives this call and nothing else touches it
+                    // meanwhile. Callbacks only get a `&Terminal`, so they
+                    // can't reach any of those entry points, and dispatch
+                    // never nests: at most one `&mut VTable` exists at a
+                    // time.
                     let vtable = unsafe { &mut *ud.cast::<VTable<'_, '_>>() };
 
                     let obj = $crate::alloc::Object::new(t).expect("received null terminal ptr in callback - this is a bug!");
