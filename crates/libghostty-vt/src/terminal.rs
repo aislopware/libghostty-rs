@@ -2754,6 +2754,121 @@ mod tests {
     }
 
     #[test]
+    fn osc5522_clipboard_read_targets_only() {
+        // A read for only the targets listing (payload "." = "Lg==") carries
+        // no MIME types, so libghostty hands the callback `mimes = NULL,
+        // mimes_len = 0`. The first read records a grant for the password;
+        // the listing-only read must still arrive ungranted (it is
+        // prompt-exempt and never consults grants), and the follow-up data
+        // read still sees the grant.
+        let remember = "\x1b]5522;type=read:id=a:name=YXBw:pw=c2VjcmV0;dGV4dC9wbGFpbg==\x1b\\";
+        let list = "\x1b]5522;type=read:id=l:name=YXBw:pw=c2VjcmV0;Lg==\x1b\\";
+        let input = [remember, list, remember].concat();
+        let (seen, output) = clipboard_read(input.as_bytes(), |request| {
+            // Empty slices hand C dangling non-null pointers with length 0.
+            request.reply(Ok(&[]), &[], true);
+        });
+        let observed: Vec<_> = seen
+            .iter()
+            .map(|s| (s.mimes.len(), s.list, s.granted))
+            .collect();
+        assert_eq!(
+            observed,
+            [(1, false, false), (0, true, false), (1, false, true)]
+        );
+
+        // An empty listing is a DATA packet with no payload.
+        let listing = concat!(
+            "\x1b]5522;type=read:status=OK:id=l\x1b\\",
+            "\x1b]5522;type=read:status=DATA:id=l:mime=Lg==\x1b\\",
+            "\x1b]5522;type=read:status=DONE:id=l\x1b\\",
+        );
+        let output = String::from_utf8(output).expect("responses are ASCII");
+        assert!(output.contains(listing), "{output:?}");
+    }
+
+    #[test]
+    fn clipboard_read_empty_reply_contents() {
+        // Empty MIME and data strings hand C dangling non-null pointers with
+        // length 0. An empty representation produces no DATA packets, which
+        // is how the protocol reports an unavailable type.
+        let (_, output) = clipboard_read(
+            b"\x1b]5522;type=read:id=e;dGV4dC9wbGFpbg==\x1b\\",
+            |request| {
+                request.reply(
+                    Ok(&[
+                        ClipboardReplyContent::new("", b""),
+                        ClipboardReplyContent::new("text/plain", b""),
+                    ]),
+                    &[ClipboardMime::new("")],
+                    false,
+                );
+            },
+        );
+        assert_eq!(
+            output,
+            concat!(
+                "\x1b]5522;type=read:status=OK:id=e\x1b\\",
+                "\x1b]5522;type=read:status=DONE:id=e\x1b\\",
+            )
+            .as_bytes()
+        );
+
+        // OSC 52 has no text representation to use, so the clipboard is empty.
+        let (_, output) = clipboard_read(b"\x1b]52;c;?\x1b\\", |request| {
+            request.reply(Ok(&[ClipboardReplyContent::new("", b"")]), &[], false);
+        });
+        assert_eq!(output, b"\x1b]52;c;\x1b\\");
+    }
+
+    #[test]
+    fn osc5522_clipboard_read_errors() {
+        for (error, status) in [
+            (ClipboardReadError::Denied, "EPERM"),
+            (ClipboardReadError::Unsupported, "ENOSYS"),
+            (ClipboardReadError::Busy, "EBUSY"),
+            (ClipboardReadError::IoError, "EIO"),
+        ] {
+            let (_, output) = clipboard_read(
+                b"\x1b]5522;type=read:id=x;dGV4dC9wbGFpbg==\x1b\\",
+                |request| request.reply(Err(error), &[], false),
+            );
+            let expected = format!("\x1b]5522;type=read:status={status}:id=x\x1b\\");
+            assert_eq!(output, expected.as_bytes(), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn clipboard_read_primary_location() {
+        let reply = |request: ClipboardRead<'_>| {
+            request.reply(
+                Ok(&[ClipboardReplyContent::new("text/plain", b"hello")]),
+                &[],
+                false,
+            );
+        };
+
+        let (seen, output) = clipboard_read(b"\x1b]52;p;?\x1b\\", reply);
+        assert_eq!(seen[0].location, Some(ClipboardLocation::Primary));
+        assert_eq!(output, b"\x1b]52;p;aGVsbG8=\x1b\\");
+
+        let (seen, output) = clipboard_read(
+            b"\x1b]5522;type=read:loc=primary:id=p;dGV4dC9wbGFpbg==\x1b\\",
+            reply,
+        );
+        assert_eq!(seen[0].location, Some(ClipboardLocation::Primary));
+        assert_eq!(
+            output,
+            concat!(
+                "\x1b]5522;type=read:status=OK:loc=primary:id=p\x1b\\",
+                "\x1b]5522;type=read:status=DATA:id=p:mime=dGV4dC9wbGFpbg==;aGVsbG8=\x1b\\",
+                "\x1b]5522;type=read:status=DONE:id=p\x1b\\",
+            )
+            .as_bytes()
+        );
+    }
+
+    #[test]
     fn resize_pull_scrollback_controls_growing_rows() {
         // Apply `configure`, fill a 5-row terminal past its height so rows
         // land in scrollback and the cursor sits on the bottom row, then grow
