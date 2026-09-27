@@ -244,8 +244,11 @@ impl Terminal<'_, '_> {
     /// `reader` produces the data of a representation by writing it to the
     /// given writer. It is called at most once per paste: for the text
     /// representation being pasted, never for anything else and never for a
-    /// paste event. The MIME type requested is always an entry of `mimes`. An
-    /// error from the reader fails the paste with [`Error::IoError`](crate::Error::IoError).
+    /// paste event. The MIME type requested is always an entry of `mimes`,
+    /// passed through exactly as given there (the same pointer and length),
+    /// so the reader may identify the representation by pointer (e.g. with
+    /// [`std::ptr::eq`]) or by content. An error from the reader fails the
+    /// paste with [`Error::IoError`](crate::Error::IoError).
     ///
     /// A paste event records a session grant for its one-time password only
     /// once the event is written; a failed call never leaves a grant for an
@@ -397,6 +400,17 @@ mod tests {
         assert!(result.unwrap());
         assert_eq!(reads, ["UTF8_STRING"]);
         assert_eq!(*output.borrow(), b"hi");
+
+        // The reader gets the very string it was given, not a copy.
+        let mime = String::from("text/plain");
+        let mut same = false;
+        terminal
+            .paste(Options::new(), &[ClipboardMime::new(&mime)], |read, out| {
+                same = std::ptr::eq(read, mime.as_str());
+                out.write_all(b"hi")
+            })
+            .unwrap();
+        assert!(same);
 
         // A newline could inject a command, so it needs confirmation.
         let (result, _) = paste(&mut terminal, &output, Options::new(), &TEXT, b"a\nb");
