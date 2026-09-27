@@ -1804,8 +1804,11 @@ impl<'t> ClipboardRead<'t> {
     pub fn mimes(&self) -> impl ExactSizeIterator<Item = &'t [u8]> {
         // SAFETY: The request lives for the callback duration.
         let raw = unsafe { &*self.ptr };
-        let mimes: &'t [ffi::String] = if raw.mimes_len == 0 {
-            // `mimes` is NULL when empty, which `from_raw_parts` rejects.
+        // `mimes` is NULL when `mimes_len` is zero (a targets-only OSC 5522
+        // read), and `from_raw_parts` requires a non-null pointer even at
+        // length zero. Check both, as `ClipboardWrite::contents` does, so
+        // a NULL pointer can never reach it.
+        let mimes: &'t [ffi::String] = if raw.mimes.is_null() || raw.mimes_len == 0 {
             &[]
         } else {
             // SAFETY: libghostty provides `mimes_len` strings that live for
