@@ -2551,10 +2551,14 @@ handlers! {
     ///
     /// <div class="warning">
     ///
-    /// Installing this callback also enables Kitty paste events (mode 5522):
-    /// pasting sends the program an event instead of the text, and the
-    /// program's follow-up read arrives here with `granted` set since the user
-    /// already pasted.
+    /// Installing this callback also makes Kitty paste events (mode 5522)
+    /// available: without it, a mode query reports mode 5522 as not
+    /// recognized. Once the running program enables mode 5522, a
+    /// user-initiated clipboard paste performed by libghostty
+    /// (`ghostty_terminal_paste`) sends the program an event instead of the
+    /// text, and the program's follow-up read arrives here with `granted` set
+    /// since the user already pasted. Pastes the embedder encodes itself
+    /// (e.g. with [`crate::paste::encode`]) are not affected.
     ///
     /// </div>
     pub fn on_clipboard_read(
