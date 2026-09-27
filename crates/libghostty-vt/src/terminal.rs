@@ -2337,53 +2337,195 @@ mod tests {
 
     #[test]
     fn resize_pull_scrollback_controls_growing_rows() {
-        // Fill a 5-row terminal past its height so rows land in scrollback
-        // and the cursor sits on the bottom row, then grow it to 8 rows.
-        let cursor_row_after_growing = |pull: Option<bool>| {
+        // Apply `configure`, fill a 5-row terminal past its height so rows
+        // land in scrollback and the cursor sits on the bottom row, then grow
+        // it to 8 rows and report where the cursor ended up.
+        fn cursor_row_after_growing(
+            configure: impl FnOnce(&mut Terminal<'static, 'static>),
+        ) -> u16 {
             let mut terminal = Terminal::new(10, 5).expect("terminal should initialize");
-            terminal
-                .set_resize_pull_scrollback(pull)
-                .expect("option should be settable");
+            configure(&mut terminal);
             terminal.vt_write(b"1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8");
             assert_eq!(terminal.cursor_y().unwrap(), 4);
             terminal
                 .resize(10, 8, 8, 16)
                 .expect("resize should succeed");
             terminal.cursor_y().unwrap()
-        };
+        }
+        fn set(terminal: &mut Terminal<'static, 'static>, pull: Option<bool>) {
+            terminal
+                .set_resize_pull_scrollback(pull)
+                .expect("option should be settable");
+        }
 
         // Pulling scrollback back in moves the cursor's line down with it.
-        assert_eq!(cursor_row_after_growing(None), 7);
-        assert_eq!(cursor_row_after_growing(Some(true)), 7);
+        // That is the default, both when never set and when set explicitly.
+        assert_eq!(cursor_row_after_growing(|_| {}), 7);
+        assert_eq!(cursor_row_after_growing(|t| set(t, Some(true))), 7);
         // Otherwise blank rows are appended below and the cursor stays put.
-        assert_eq!(cursor_row_after_growing(Some(false)), 4);
+        assert_eq!(cursor_row_after_growing(|t| set(t, Some(false))), 4);
+        // `None` has to actively restore the default, not just leave the
+        // previous value in place.
+        assert_eq!(
+            cursor_row_after_growing(|t| {
+                set(t, Some(false));
+                set(t, None);
+            }),
+            7
+        );
+        // The setting survives a full reset, whether the program sends RIS
+        // or the embedder resets the terminal.
+        assert_eq!(
+            cursor_row_after_growing(|t| {
+                set(t, Some(false));
+                t.vt_write(b"\x1bc");
+            }),
+            4
+        );
+        assert_eq!(
+            cursor_row_after_growing(|t| {
+                set(t, Some(false));
+                t.reset();
+            }),
+            4
+        );
     }
 
     #[test]
     fn render_hold_reports_start_and_end_in_pairs() {
+        // Mirrors upstream's "set render_hold callback" test in
+        // src/terminal/c/terminal.zig.
         let events = RefCell::new(Vec::new());
+        let take = || std::mem::take(&mut *events.borrow_mut());
         let mut terminal = Terminal::new(80, 24).expect("terminal should initialize");
         terminal
             .on_render_hold(|_term, held| events.borrow_mut().push(held))
             .expect("callback should register");
 
-        // Setting the mode twice only starts one hold.
-        terminal.vt_write(b"\x1b[?2026h\x1b[?2026h");
-        terminal.vt_write(b"\x1b[?2026l");
-        // Reset and resize both end an active hold.
-        terminal.vt_write(b"\x1b[?2026h");
+        // A set during a hold and a reset without a hold are ignored.
+        terminal.vt_write(b"\x1b[?2026h\x1b[?2026hA\x1b[?2026l\x1b[?2026l");
+        assert_eq!(take(), [true, false]);
+
+        // Neither a reset nor a resize reports anything without a hold.
         terminal.reset();
-        terminal.vt_write(b"\x1b[?2026h");
         terminal
             .resize(100, 30, 8, 16)
             .expect("resize should succeed");
-        // Changing the mode directly never invokes the callback.
+        assert_eq!(take(), []);
+
+        // Reset and resize end an active hold, and so does a resize that
+        // keeps the dimensions: upstream turns synchronized output off
+        // before it checks whether the grid size changed.
+        terminal.vt_write(b"\x1b[?2026h");
+        terminal.reset();
+        terminal.reset();
+        terminal.vt_write(b"\x1b[?2026h");
+        terminal
+            .resize(80, 24, 8, 16)
+            .expect("resize should succeed");
+        terminal.vt_write(b"\x1b[?2026h");
+        terminal
+            .resize(80, 24, 8, 16)
+            .expect("resize should succeed");
+        assert_eq!(take(), [true, false, true, false, true, false]);
+        assert!(!terminal.mode(Mode::SYNC_OUTPUT).unwrap());
+
+        // A resize that fails leaves the mode, and so the hold, in place.
+        terminal.vt_write(b"\x1b[?2026h");
+        assert!(terminal.resize(0, 24, 8, 16).is_err());
+        assert!(terminal.mode(Mode::SYNC_OUTPUT).unwrap());
+        terminal.vt_write(b"\x1b[?2026l");
+        assert_eq!(take(), [true, false]);
+
+        // Changing the mode ourselves, e.g. when a hold times out, is never
+        // reported in either direction. The hold is simply over, so the
+        // callback sees `true` without a matching `false`.
+        terminal.vt_write(b"\x1b[?2026h");
+        terminal
+            .set_mode(Mode::SYNC_OUTPUT, false)
+            .expect("mode should be settable");
+        assert!(!terminal.mode(Mode::SYNC_OUTPUT).unwrap());
         terminal
             .set_mode(Mode::SYNC_OUTPUT, true)
+            .expect("mode should be settable")
+            .set_mode(Mode::SYNC_OUTPUT, false)
             .expect("mode should be settable");
+        assert_eq!(take(), [true]);
+        // ...and the program can start a new hold afterwards.
+        terminal.vt_write(b"\x1b[?2026h");
+        assert_eq!(take(), [true]);
+    }
 
-        drop(terminal);
-        assert_eq!(events.into_inner(), [true, false, true, false, true, false]);
+    /// Read the text of the first row of a render state snapshot.
+    fn first_row_text(snapshot: &crate::render::Snapshot<'_, '_>) -> Result<String> {
+        let mut rows = crate::render::RowIterator::new()?;
+        let mut cells = crate::render::CellIterator::new()?;
+        let mut row_iter = rows.update(snapshot)?;
+        let Some(row) = row_iter.next() else {
+            return Ok(String::new());
+        };
+        let mut cell_iter = cells.update(row)?;
+        let mut text = String::new();
+        while let Some(cell) = cell_iter.next() {
+            text.extend(cell.graphemes()?);
+        }
+        Ok(text)
+    }
+
+    #[test]
+    fn render_hold_captures_frame_before_hold() {
+        // A renderer that refreshes its render state whenever a hold starts
+        // or ends, recording the first row it captured each time. Failures
+        // are recorded as `None` instead of panicking, since a panic here
+        // would abort the whole test binary.
+        let render_state =
+            RefCell::new(RenderState::new().expect("render state should initialize"));
+        let frames = RefCell::new(Vec::new());
+        let take = || std::mem::take(&mut *frames.borrow_mut());
+        let mut terminal = Terminal::new(80, 24).expect("terminal should initialize");
+        terminal
+            .on_render_hold(|term, held| {
+                let text = render_state.try_borrow_mut().ok().and_then(|mut state| {
+                    let snapshot = state.update(term).ok()?;
+                    first_row_text(&snapshot).ok()
+                });
+                frames.borrow_mut().push((held, text));
+            })
+            .expect("callback should register");
+
+        // The hold starts before `B` is processed, even though it's in the
+        // same write, so the captured frame only has `A`.
+        terminal.vt_write(b"A\x1b[?2026hB");
+        assert_eq!(take(), [(true, Some("A".to_owned()))]);
+        // The terminal itself has moved on, though.
+        {
+            let mut state = render_state.borrow_mut();
+            let snapshot = state.update(&terminal).expect("render state should update");
+            assert_eq!(first_row_text(&snapshot).unwrap(), "AB");
+        }
+        terminal.vt_write(b"\x1b[?2026l");
+        assert_eq!(take(), [(false, Some("AB".to_owned()))]);
+
+        // Updating the render state also works when the hold ends from
+        // `resize` and `reset`, which invoke the callback while the outer
+        // call holds `&mut Terminal`.
+        terminal.vt_write(b"\x1b[?2026hC");
+        terminal
+            .resize(100, 30, 8, 16)
+            .expect("resize should succeed");
+        assert_eq!(
+            take(),
+            [
+                (true, Some("AB".to_owned())),
+                (false, Some("ABC".to_owned()))
+            ]
+        );
+        terminal.vt_write(b"\x1b[?2026hD");
+        terminal.reset();
+        assert_eq!(
+            take(),
+            [(true, Some("ABC".to_owned())), (false, Some(String::new()))]
+        );
     }
 
     #[inline(never)]
