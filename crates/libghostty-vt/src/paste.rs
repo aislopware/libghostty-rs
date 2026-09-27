@@ -160,6 +160,7 @@ pub fn encode(data: &mut [u8], bracketed: bool, buf: &mut [u8]) -> Result<usize>
 /// Why this paste happened.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, int_enum::IntEnum)]
 #[repr(i32)]
+#[non_exhaustive]
 pub enum Source {
     /// A user action such as a paste keybind, menu item, or middle click.
     #[default]
