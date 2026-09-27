@@ -700,6 +700,31 @@ mod tests {
     }
 
     #[test]
+    fn ground_snapshot_keeps_tracking_enabled() {
+        let mut terminal = Terminal::new(8, 2).unwrap();
+        terminal.vt_write(b"hi");
+        let mut bytes = Vec::new();
+        terminal.encode_snapshot(&mut bytes).unwrap();
+
+        let mut decoder = Decoder::new_buf(&bytes).unwrap();
+        decoder
+            .set_max_continuation_bytes(1024)
+            .unwrap()
+            .set_retain_continuation(true)
+            .unwrap();
+        let mut restored = decoder.decode().unwrap();
+
+        // There was nothing unfinished to restore, but tracking is still on
+        // and exports an empty continuation rather than refusing to.
+        assert_eq!(restored.continuation_max_bytes().unwrap(), 1024);
+        assert_eq!(continuation(&restored).as_deref(), Some(&b""[..]));
+
+        // Exporting doesn't turn tracking off, so later input is still tracked.
+        restored.vt_write(b"\x1b[");
+        assert_eq!(continuation(&restored).as_deref(), Some(&b"\x1b["[..]));
+    }
+
+    #[test]
     fn zero_limit_leaves_tracking_disabled() {
         // Only snapshots at ground are accepted with a zero limit.
         let mut terminal = Terminal::new(8, 2).unwrap();
