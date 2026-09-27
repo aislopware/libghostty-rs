@@ -685,11 +685,12 @@ mod tests {
         let bytes = unfinished_snapshot();
         let mut decoder = Decoder::new_buf(&bytes).unwrap();
         decoder.set_retain_continuation(true).unwrap();
+        // The tracking limit is the decoder's, not the encoder's.
+        let limit = decoder.max_continuation_bytes().unwrap();
         let mut incremental = decoder.ready().unwrap();
-        // The tracking limit is the decoder default, not the encoder's.
         assert_eq!(
             incremental.terminal().continuation_max_bytes().unwrap(),
-            65 * 1024 * 1024
+            limit
         );
         assert_eq!(
             continuation(incremental.terminal()).as_deref(),
