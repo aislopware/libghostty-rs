@@ -9,7 +9,7 @@ use crate::{
         from_optional_result_with_len, from_result, from_result_with_len,
     },
     ffi::{self, TerminalData as Data, TerminalOption as Opt},
-    key,
+    key, mouse,
     screen::{GridRef, Screen, TrackedGridRef},
     style::{self, Palette, RawPalette, RgbColor},
 };
@@ -865,6 +865,15 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     /// or any-event) are enabled.
     pub fn is_mouse_tracking(&self) -> Result<bool> {
         self.get(Data::MOUSE_TRACKING)
+    }
+    /// Get the mouse pointer shape the application asked for with OSC 22.
+    ///
+    /// Starts as [`mouse::Shape::Text`]. An unknown shape name leaves the
+    /// last accepted one, and hovering a hyperlink does not change it: a
+    /// host applies its own hover pointer on top.
+    pub fn mouse_shape(&self) -> Result<mouse::Shape> {
+        self.get::<ffi::MouseShape::Type>(Data::MOUSE_SHAPE)
+            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
     }
     /// Whether VT processing encountered a non-gracefully handled error that
     /// may have prevented a terminal-owned semantic update.
@@ -2209,6 +2218,24 @@ mod tests {
         terminal.vt_write(b"\x1b[?2026h");
         terminal.set_mode(Mode::SYNC_OUTPUT, false).expect("set_mode");
         assert_eq!(holds.borrow().len(), 3, "ending a hold by hand is not reported");
+    }
+
+    /// OSC 22 sets the pointer shape once terminated, and an unknown name
+    /// keeps the last one.
+    #[test]
+    fn mouse_shape_follows_osc_22() {
+        let mut terminal = Terminal::new(20, 4).expect("terminal should initialize");
+        assert_eq!(terminal.mouse_shape().expect("mouse_shape"), mouse::Shape::Text);
+
+        terminal.vt_write(b"\x1b]22;pointer\x07");
+        assert_eq!(terminal.mouse_shape().expect("mouse_shape"), mouse::Shape::Pointer);
+        terminal.vt_write(b"\x1b]22;no-such-shape\x07");
+        assert_eq!(terminal.mouse_shape().expect("mouse_shape"), mouse::Shape::Pointer);
+
+        terminal.vt_write(b"\x1b]22;nwse-resize");
+        assert_eq!(terminal.mouse_shape().expect("mouse_shape"), mouse::Shape::Pointer);
+        terminal.vt_write(b"\x1b\\");
+        assert_eq!(terminal.mouse_shape().expect("mouse_shape"), mouse::Shape::NwseResize);
     }
 
     /// Send an OSC 2 title sequence, then verify `term.title()` returns the
