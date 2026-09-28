@@ -3063,7 +3063,9 @@ pub mod TerminalData {
     pub const CURSOR_AT_PROMPT: Type = 39;
     #[doc = " The configured maximum decoded bytes per Kitty clipboard protocol\n (OSC 5522) write transaction. See\n GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES.\n\n Output type: size_t *"]
     pub const CLIPBOARD_WRITE_MAX_BYTES: Type = 40;
-    #[doc = " The configured maximum decoded bytes per Kitty clipboard protocol\n (OSC 5522) write transaction. See\n GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES.\n\n Output type: size_t *"]
+    #[doc = " The mouse pointer shape requested by the application through OSC 22.\n\n Initially GHOSTTY_MOUSE_SHAPE_TEXT. Excludes host hover overrides.\n\n Output type: GhosttyMouseShape *"]
+    pub const MOUSE_SHAPE: Type = 41;
+    #[doc = " The mouse pointer shape requested by the application through OSC 22.\n\n Initially GHOSTTY_MOUSE_SHAPE_TEXT. Excludes host hover overrides.\n\n Output type: GhosttyMouseShape *"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 unsafe extern "C" {
@@ -4784,6 +4786,45 @@ unsafe extern "C" {
         out_len: *mut usize,
     ) -> Result::Type;
 }
+pub mod MouseShape {
+    #[doc = " Mouse pointer shapes based on the W3C cursor names.\n\n Hosts map these values to their native pointer shapes; not every platform\n supports every shape. These are pointer shapes, not terminal text cursors.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    pub const DEFAULT: Type = 0;
+    pub const CONTEXT_MENU: Type = 1;
+    pub const HELP: Type = 2;
+    pub const POINTER: Type = 3;
+    pub const PROGRESS: Type = 4;
+    pub const WAIT: Type = 5;
+    pub const CELL: Type = 6;
+    pub const CROSSHAIR: Type = 7;
+    pub const TEXT: Type = 8;
+    pub const VERTICAL_TEXT: Type = 9;
+    pub const ALIAS: Type = 10;
+    pub const COPY: Type = 11;
+    pub const MOVE: Type = 12;
+    pub const NO_DROP: Type = 13;
+    pub const NOT_ALLOWED: Type = 14;
+    pub const GRAB: Type = 15;
+    pub const GRABBING: Type = 16;
+    pub const ALL_SCROLL: Type = 17;
+    pub const COL_RESIZE: Type = 18;
+    pub const ROW_RESIZE: Type = 19;
+    pub const N_RESIZE: Type = 20;
+    pub const E_RESIZE: Type = 21;
+    pub const S_RESIZE: Type = 22;
+    pub const W_RESIZE: Type = 23;
+    pub const NE_RESIZE: Type = 24;
+    pub const NW_RESIZE: Type = 25;
+    pub const SE_RESIZE: Type = 26;
+    pub const SW_RESIZE: Type = 27;
+    pub const EW_RESIZE: Type = 28;
+    pub const NS_RESIZE: Type = 29;
+    pub const NESW_RESIZE: Type = 30;
+    pub const NWSE_RESIZE: Type = 31;
+    pub const ZOOM_IN: Type = 32;
+    pub const ZOOM_OUT: Type = 33;
+    pub const MAX_VALUE: Type = 2147483647;
+}
 pub mod PasteSource {
     #[doc = " Why a paste happened."]
     pub type Type = ::std::os::raw::c_int;
@@ -4928,7 +4969,7 @@ unsafe extern "C" {
     pub fn ghostty_search_free(search: Search);
 }
 unsafe extern "C" {
-    #[doc = " Make a bounded amount of search progress.\n\n This only works on data the search has already copied and never\n reads the terminal, so it is safe to call while another thread\n modifies the terminal. Call it in a loop while the status is\n GHOSTTY_SEARCH_STATUS_RUNNING. When the status becomes\n GHOSTTY_SEARCH_STATUS_FEED_REQUIRED, call ghostty_search_feed() to\n unblock it.\n\n         search is NULL\n"]
+    #[doc = " Make a bounded amount of search progress.\n\n This only works on data the search has already copied and never\n reads the terminal, so it is safe to call while another thread\n modifies the terminal. Call it in a loop while the status is\n GHOSTTY_SEARCH_STATUS_RUNNING. When the status becomes\n GHOSTTY_SEARCH_STATUS_FEED_REQUIRED, call ghostty_search_feed() to\n unblock it.\n\n         search is NULL or the terminal was freed\n"]
     pub fn ghostty_search_tick(search: Search, out_status: *mut SearchStatus::Type)
     -> Result::Type;
 }
