@@ -1087,26 +1087,28 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
         Ok(self)
     }
 
-    /// Set the maximum content bytes retained for each unsupported terminal
-    /// sequence. Zero, the default, disables capture and prevents
-    /// [unknown sequence callbacks](Self::on_unknown_sequence).
+    /// Set the most bytes of each unsupported sequence to keep and pass to the
+    /// [unknown sequence callback](Self::on_unknown_sequence). The same limit
+    /// applies to APC and OSC sequences.
     ///
-    /// When this limit is hit, the unknown sequence callback is still invoked,
-    /// but with `truncated` set.
+    /// Zero, the default, turns unsupported sequence reporting off.
     ///
-    /// Unsupported sequences are buffered in memory until they end, so this
-    /// limit bounds how much memory a single sequence can make the terminal
-    /// allocate. It is the only bound: [`Self::set_apc_max_bytes`] applies to
-    /// recognized protocols, not to unsupported sequences. A nonzero limit
-    /// buffers sequences even when no
-    /// [unknown sequence callback](Self::on_unknown_sequence) is installed;
-    /// they are then discarded when they end.
+    /// A sequence longer than the limit is still reported. Its content holds
+    /// the first bytes up to the limit, and `truncated` is true.
+    ///
+    /// Choose a limit that fits the largest sequence you expect. Unknown OSC
+    /// sequences up to 2048 bytes are kept in a buffer the terminal already
+    /// owns, so limits up to 2048 add no memory allocations for OSC. Larger
+    /// limits allocate memory for each unknown OSC sequence. Unknown APC
+    /// sequences are always kept in allocated memory.
     ///
     /// <div class="warning">
     ///
-    /// A running program controls when a sequence ends, so a very large limit
-    /// such as `usize::MAX` lets it make the terminal buffer an unterminated
-    /// sequence until allocation fails.
+    /// This limit is the only bound on how much an unsupported sequence is
+    /// buffered, and it applies even when no callback is installed. A running
+    /// program controls when a sequence ends, so a very large limit such as
+    /// `usize::MAX` lets it make the terminal buffer an unterminated sequence
+    /// until allocation fails.
     ///
     /// </div>
     pub fn set_unknown_max_bytes(&mut self, max: usize) -> Result<&mut Self> {
@@ -2737,14 +2739,25 @@ handlers! {
         func(&term, unsafe { ProgressReport::from_raw(progress) });
     }
 
-    /// Call the given function for normally terminated sequences whose
-    /// identifier is not supported by the terminal. Aborted sequences,
-    /// malformed recognized commands, and explicitly disabled known protocols
-    /// are ignored.
+    /// Call the given function once for each complete sequence that
+    /// libghostty-vt does not implement. [`UnknownSequence`] is
+    /// non-exhaustive, because more kinds of sequences may be reported in
+    /// later versions.
     ///
-    /// Capture must also be enabled with a nonzero
-    /// [`Self::set_unknown_max_bytes`]. Installing this callback alone does
-    /// not retain sequence content or allocate memory.
+    /// These are not reported:
+    ///
+    /// - Sequences the program cancelled partway through with CAN or SUB.
+    /// - Sequences libghostty-vt implements, even when their contents are
+    ///   malformed.
+    /// - Supported protocols that the embedder turned off.
+    ///
+    /// The callback runs during [`Self::vt_write`]. It may write a reply to
+    /// the pty, and that reply stays in order with the terminal's own
+    /// replies.
+    ///
+    /// Nothing is reported until [`Self::set_unknown_max_bytes`] is also set
+    /// to a nonzero value. Installing the callback by itself keeps no data and
+    /// allocates no memory.
     pub fn on_unknown_sequence(
         &mut self,
         tag = UNKNOWN_SEQUENCE,
