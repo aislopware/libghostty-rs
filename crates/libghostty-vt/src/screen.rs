@@ -508,7 +508,9 @@ impl Bits {
 
     #[inline]
     const fn of(self, raw: u64) -> u64 {
-        (raw >> self.lsb) & self.mask
+        // `lsb` is below 64 (checked when the layout was read), so the
+        // wrapping shift is the plain one without a check per field.
+        raw.wrapping_shr(self.lsb) & self.mask
     }
 }
 
