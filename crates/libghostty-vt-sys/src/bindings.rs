@@ -1843,6 +1843,115 @@ unsafe extern "C" {
         out_written: *mut usize,
     ) -> Result::Type;
 }
+pub mod OscCommandType {
+    #[doc = " OSC command types.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    pub const INVALID: Type = 0;
+    pub const CHANGE_WINDOW_TITLE: Type = 1;
+    pub const CHANGE_WINDOW_ICON: Type = 2;
+    pub const SEMANTIC_PROMPT: Type = 3;
+    pub const CLIPBOARD_CONTENTS: Type = 4;
+    pub const REPORT_PWD: Type = 5;
+    pub const MOUSE_SHAPE: Type = 6;
+    pub const COLOR_OPERATION: Type = 7;
+    pub const KITTY_COLOR_PROTOCOL: Type = 8;
+    pub const SHOW_DESKTOP_NOTIFICATION: Type = 9;
+    pub const HYPERLINK_START: Type = 10;
+    pub const HYPERLINK_END: Type = 11;
+    pub const CONEMU_SLEEP: Type = 12;
+    pub const CONEMU_SHOW_MESSAGE_BOX: Type = 13;
+    pub const CONEMU_CHANGE_TAB_TITLE: Type = 14;
+    pub const CONEMU_PROGRESS_REPORT: Type = 15;
+    pub const CONEMU_WAIT_INPUT: Type = 16;
+    pub const CONEMU_GUIMACRO: Type = 17;
+    pub const CONEMU_RUN_PROCESS: Type = 18;
+    pub const CONEMU_OUTPUT_ENVIRONMENT_VARIABLE: Type = 19;
+    pub const CONEMU_XTERM_EMULATION: Type = 20;
+    pub const CONEMU_COMMENT: Type = 21;
+    pub const KITTY_TEXT_SIZING: Type = 22;
+    pub const KITTY_CLIPBOARD_PROTOCOL: Type = 23;
+    pub const KITTY_DND_PROTOCOL: Type = 24;
+    pub const CONTEXT_SIGNAL: Type = 25;
+    pub const KITTY_DESKTOP_NOTIFICATION: Type = 26;
+    #[doc = " An OSC sequence whose number the parser does not implement. Read it\n with the GHOSTTY_OSC_DATA_UNKNOWN_* data types.\n\n Only produced when GHOSTTY_OSC_OPT_UNKNOWN_MAX_BYTES is nonzero.\n Otherwise these sequences are GHOSTTY_OSC_COMMAND_INVALID."]
+    pub const UNKNOWN: Type = 27;
+    #[doc = " An OSC sequence whose number the parser does not implement. Read it\n with the GHOSTTY_OSC_DATA_UNKNOWN_* data types.\n\n Only produced when GHOSTTY_OSC_OPT_UNKNOWN_MAX_BYTES is nonzero.\n Otherwise these sequences are GHOSTTY_OSC_COMMAND_INVALID."]
+    pub const TYPE_MAX_VALUE: Type = 2147483647;
+}
+pub mod OscTerminator {
+    #[doc = " How an OSC sequence was ended.\n\n Programs can end an OSC sequence in two ways. When you reply to a\n sequence, end the reply the same way the program ended its request.\n Some programs only recognize replies that match.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The string terminator (ST): ESC followed by a backslash (0x1B 0x5C)."]
+    pub const ST: Type = 0;
+    #[doc = " The bell character, BEL (byte 0x07)."]
+    pub const BEL: Type = 1;
+    #[doc = " The bell character, BEL (byte 0x07)."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod OscOption {
+    #[doc = " OSC parser options, set with ghostty_osc_set().\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The most bytes to keep from each OSC sequence whose number the parser\n does not implement.\n\n Zero, the default, discards these sequences and they produce\n GHOSTTY_OSC_COMMAND_INVALID. Any other value makes them produce\n GHOSTTY_OSC_COMMAND_UNKNOWN. A NULL value pointer sets the limit back\n to zero.\n\n A sequence longer than the limit is still reported. Its content holds\n the first bytes up to the limit, and GHOSTTY_OSC_DATA_UNKNOWN_TRUNCATED\n is true.\n\n Limits up to 2048 bytes use a buffer the parser already owns and never\n allocate memory. Larger limits allocate memory from the parser's\n allocator for each unknown sequence.\n\n Input type: size_t*"]
+    pub const GHOSTTY_OSC_OPT_UNKNOWN_MAX_BYTES: Type = 0;
+    #[doc = " The most bytes to keep from each OSC sequence whose number the parser\n does not implement.\n\n Zero, the default, discards these sequences and they produce\n GHOSTTY_OSC_COMMAND_INVALID. Any other value makes them produce\n GHOSTTY_OSC_COMMAND_UNKNOWN. A NULL value pointer sets the limit back\n to zero.\n\n A sequence longer than the limit is still reported. Its content holds\n the first bytes up to the limit, and GHOSTTY_OSC_DATA_UNKNOWN_TRUNCATED\n is true.\n\n Limits up to 2048 bytes use a buffer the parser already owns and never\n allocate memory. Larger limits allocate memory from the parser's\n allocator for each unknown sequence.\n\n Input type: size_t*"]
+    pub const GHOSTTY_OSC_OPT_MAX_VALUE: Type = 2147483647;
+}
+pub mod OscCommandData {
+    #[doc = " OSC command data types.\n\n These values specify what type of data to extract from an OSC command\n using `ghostty_osc_command_data`.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Invalid data type. Never results in any data extraction."]
+    pub const INVALID: Type = 0;
+    #[doc = " Window title string data.\n\n Valid for: GHOSTTY_OSC_COMMAND_CHANGE_WINDOW_TITLE\n\n Output type: const char ** (pointer to null-terminated string)\n\n Lifetime: Valid until the next call to any ghostty_osc_* function with\n the same parser instance. Memory is owned by the parser."]
+    pub const CHANGE_WINDOW_TITLE_STR: Type = 1;
+    #[doc = " The raw bytes of an unknown sequence: everything that was passed to\n ghostty_osc_next(), including the number at the start. For example,\n the sequence `ESC ] 7400;status=busy BEL` gives\n `7400;status=busy`. The bytes are not null-terminated.\n\n Valid for: GHOSTTY_OSC_COMMAND_UNKNOWN\n\n Output type: GhosttyString *\n\n Lifetime: Valid until the next call to any ghostty_osc_* function with\n the same parser instance. Memory is owned by the parser."]
+    pub const UNKNOWN_CONTENT: Type = 2;
+    #[doc = " True if the unknown sequence was longer than\n GHOSTTY_OSC_OPT_UNKNOWN_MAX_BYTES, or memory ran out while reading it.\n In that case the content holds only the beginning of the sequence.\n\n Valid for: GHOSTTY_OSC_COMMAND_UNKNOWN\n\n Output type: bool *"]
+    pub const UNKNOWN_TRUNCATED: Type = 3;
+    #[doc = " How the unknown sequence was ended, based on the terminator passed to\n ghostty_osc_end(). If you reply to the sequence, end the reply the same\n way.\n\n Valid for: GHOSTTY_OSC_COMMAND_UNKNOWN\n\n Output type: GhosttyOscTerminator *"]
+    pub const UNKNOWN_TERMINATOR: Type = 4;
+    #[doc = " How the unknown sequence was ended, based on the terminator passed to\n ghostty_osc_end(). If you reply to the sequence, end the reply the same\n way.\n\n Valid for: GHOSTTY_OSC_COMMAND_UNKNOWN\n\n Output type: GhosttyOscTerminator *"]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+unsafe extern "C" {
+    #[doc = " Create a new OSC parser instance.\n\n Creates a new OSC (Operating System Command) parser using the provided\n allocator. The parser must be freed using ghostty_vt_osc_free() when\n no longer needed.\n\n"]
+    pub fn ghostty_osc_new(allocator: *const Allocator, parser: *mut OscParser) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Free an OSC parser instance.\n\n Releases all resources associated with the OSC parser. After this call,\n the parser handle becomes invalid and must not be used.\n\n"]
+    pub fn ghostty_osc_free(parser: OscParser);
+}
+unsafe extern "C" {
+    #[doc = " Reset an OSC parser instance to its initial state.\n\n Resets the parser state, clearing any partially parsed OSC sequences\n and returning the parser to its initial state. This is useful for\n reusing a parser instance or recovering from parse errors.\n\n"]
+    pub fn ghostty_osc_reset(parser: OscParser);
+}
+unsafe extern "C" {
+    #[doc = " Set an option on an OSC parser.\n\n `value` points to the option's input type, which is listed in the\n documentation for each GhosttyOscOption value. Pass NULL to restore the\n option's default.\n\n Options stay set across ghostty_osc_reset(). You can change an option\n at any time, but a sequence that is already being parsed may keep the\n old setting. It is simplest to set options before the first sequence.\n\n         is NULL\n"]
+    pub fn ghostty_osc_set(
+        parser: OscParser,
+        option: OscOption::Type,
+        value: *const ::std::os::raw::c_void,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Parse the next byte in an OSC sequence.\n\n Processes a single byte as part of an OSC sequence. The parser maintains\n internal state to track the progress through the sequence. Call this\n function for each byte in the sequence data.\n\n When finished pumping the parser with bytes, call ghostty_osc_end\n to get the final result.\n\n"]
+    pub fn ghostty_osc_next(parser: OscParser, byte: u8);
+}
+unsafe extern "C" {
+    #[doc = " Finalize OSC parsing and retrieve the parsed command.\n\n Call this after feeding every byte of the sequence to ghostty_osc_next(),\n except the byte that ended it. Pass that byte here as the terminator.\n\n If the sequence is not a valid command, this returns NULL. You don't need\n to check for NULL before calling ghostty_osc_command_type(), which\n returns GHOSTTY_OSC_COMMAND_INVALID for it.\n\n Commands that reply to the program, such as color queries, end their\n reply the same way the request ended. A terminator of 0x07 (BEL) gets a\n BEL reply, and any other byte gets an ST reply. Commands that don't\n reply ignore the terminator.\n\n If the program cancelled the sequence with CAN (0x18) or SUB (0x1A),\n pass that byte as the terminator. The sequence is then discarded and\n this returns NULL, whatever command it contained. This matches xterm.\n The \"Ending a Sequence\" section of the overview has an example.\n\n The returned command handle is valid until the next call to any\n `ghostty_osc_*` function with the same parser instance with the exception\n of command introspection functions such as `ghostty_osc_command_type`.\n\n        0x5C for ST, or 0x18 (CAN) or 0x1A (SUB) if it was cancelled\n         a valid command or was cancelled\n"]
+    pub fn ghostty_osc_end(parser: OscParser, terminator: u8) -> OscCommand;
+}
+unsafe extern "C" {
+    #[doc = " Get the type of an OSC command.\n\n Returns the type identifier for the given OSC command. This can be used\n to determine what kind of command was parsed and what data might be\n available from it.\n\n"]
+    pub fn ghostty_osc_command_type(command: OscCommand) -> OscCommandType::Type;
+}
+unsafe extern "C" {
+    #[doc = " Extract data from an OSC command.\n\n Extracts typed data from the given OSC command based on the specified\n data type. The output pointer must be of the appropriate type for the\n requested data kind. Valid command types, output types, and memory\n safety information are documented in the `GhosttyOscCommandData` enum.\n\n"]
+    pub fn ghostty_osc_command_data(
+        command: OscCommand,
+        data: OscCommandData::Type,
+        out: *mut ::std::os::raw::c_void,
+    ) -> bool;
+}
 pub mod SizeReportStyle {
     #[doc = " Size report style.\n\n Determines the output format for the terminal size report."]
     pub type Type = ::std::os::raw::c_int;
@@ -2336,11 +2445,13 @@ pub type TerminalBellFn = ::std::option::Option<
     unsafe extern "C" fn(terminal: Terminal, userdata: *mut ::std::os::raw::c_void),
 >;
 pub mod TerminalUnknownSequenceTag {
-    #[doc = " Unsupported terminal sequence tags.\n\n Only APC sequences are currently reported. Additional sequence types may\n be added without changing the callback shape.\n"]
+    #[doc = " The kind of unsupported sequence passed to a\n GhosttyTerminalUnknownSequenceFn callback.\n\n New kinds may be added in later versions. Callbacks should ignore any\n tag they don't handle.\n"]
     pub type Type = ::std::os::raw::c_int;
     #[doc = " Application Program Command (APC)."]
     pub const GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC: Type = 0;
-    #[doc = " Application Program Command (APC)."]
+    #[doc = " Operating System Command (OSC). The value is in `value.osc`."]
+    pub const GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_OSC: Type = 1;
+    #[doc = " Operating System Command (OSC). The value is in `value.osc`."]
     pub const GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_MAX_VALUE: Type = 2147483647;
 }
 #[doc = " An unsupported string terminal sequence.\n\n The content is borrowed and valid only for the callback duration. It\n contains the bytes between the sequence introducer and terminator, may\n contain arbitrary binary data, and is not null-terminated.\n"]
@@ -2372,12 +2483,47 @@ impl Default for TerminalUnknownStringSequence {
         }
     }
 }
+#[doc = " An OSC sequence whose number libghostty-vt does not implement.\n\n OSC sequences start with `ESC ]`, followed by a number that identifies\n the command, usually a `;`, and then the command's data. The sequence\n ends with either BEL or ESC followed by a backslash. For example, a\n program might write:\n\n ESC ] 7400;status=busy BEL\n\n For that sequence, `content` is `7400;status=busy` and `terminator`\n is GHOSTTY_OSC_TERMINATOR_BEL. See the Unsupported Sequences section of\n the terminal documentation for a complete example.\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct TerminalUnknownOscSequence {
+    #[doc = " True if the sequence was longer than\n GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES, or memory ran out while\n reading it. In that case `content` holds only the beginning of the\n sequence."]
+    pub truncated: bool,
+    #[doc = " Everything between `ESC ]` and the terminator, including the number\n at the start. The bytes are not null-terminated and are only valid\n until the callback returns. Copy them if you need them later."]
+    pub content: String,
+    #[doc = " How the program ended the sequence. If you send a reply, end it the\n same way."]
+    pub terminator: OscTerminator::Type,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalUnknownOscSequence"]
+        [::std::mem::size_of::<TerminalUnknownOscSequence>() - 32usize];
+    ["Alignment of TerminalUnknownOscSequence"]
+        [::std::mem::align_of::<TerminalUnknownOscSequence>() - 8usize];
+    ["Offset of field: TerminalUnknownOscSequence::truncated"]
+        [::std::mem::offset_of!(TerminalUnknownOscSequence, truncated) - 0usize];
+    ["Offset of field: TerminalUnknownOscSequence::content"]
+        [::std::mem::offset_of!(TerminalUnknownOscSequence, content) - 8usize];
+    ["Offset of field: TerminalUnknownOscSequence::terminator"]
+        [::std::mem::offset_of!(TerminalUnknownOscSequence, terminator) - 24usize];
+};
+impl Default for TerminalUnknownOscSequence {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
 #[doc = " Unsupported terminal sequence value.\n"]
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union TerminalUnknownSequenceValue {
     #[doc = " Application Program Command (APC)."]
     pub apc: TerminalUnknownStringSequence,
+    #[doc = " Operating System Command (OSC)."]
+    pub osc: TerminalUnknownOscSequence,
     #[doc = " Padding for ABI compatibility. Do not use.\n\n 128 bytes leaves room for future structured sequence payloads, such as\n CSI with borrowed parameter, separator, and intermediate arrays, without\n changing the tagged union's ABI."]
     pub _padding: [u64; 16usize],
 }
@@ -2389,6 +2535,8 @@ const _: () = {
         [::std::mem::align_of::<TerminalUnknownSequenceValue>() - 8usize];
     ["Offset of field: TerminalUnknownSequenceValue::apc"]
         [::std::mem::offset_of!(TerminalUnknownSequenceValue, apc) - 0usize];
+    ["Offset of field: TerminalUnknownSequenceValue::osc"]
+        [::std::mem::offset_of!(TerminalUnknownSequenceValue, osc) - 0usize];
     ["Offset of field: TerminalUnknownSequenceValue::_padding"]
         [::std::mem::offset_of!(TerminalUnknownSequenceValue, _padding) - 0usize];
 };
@@ -2428,7 +2576,7 @@ impl Default for TerminalUnknownSequence {
         }
     }
 }
-#[doc = " Callback function type for unsupported terminal sequences.\n\n Called synchronously for normally terminated sequences whose identifier is\n not supported by the active terminal handler. Aborted sequences, malformed\n recognized commands, and explicitly disabled known protocols are ignored.\n\n Capture must also be enabled with a nonzero\n GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES value. Installing this callback alone\n does not retain sequence content or allocate memory.\n\n"]
+#[doc = " Callback function type for unsupported terminal sequences.\n\n Called once for each complete sequence that libghostty-vt does not\n implement. Check `sequence->tag` first, because more kinds of sequences\n may be reported in later versions.\n\n These are not reported:\n\n - Sequences the program cancelled partway through with CAN or SUB.\n - Sequences libghostty-vt implements, even when their contents are\n   malformed.\n - Supported protocols that the embedder turned off.\n\n The callback runs during ghostty_terminal_vt_write(). It may write a reply\n to the pty, and that reply stays in order with the terminal's own\n replies. It must not call ghostty_terminal_vt_write() on the same\n terminal.\n\n Nothing is reported until GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES is also\n set to a nonzero value. Installing the callback by itself keeps no data\n and allocates no memory.\n\n"]
 pub type TerminalUnknownSequenceFn = ::std::option::Option<
     unsafe extern "C" fn(
         terminal: Terminal,
@@ -2961,9 +3109,9 @@ pub mod TerminalOption {
     pub const MODE_DEFAULT: Type = 33;
     #[doc = " Set the current value of a terminal mode.\n\n This does not change the value restored by a full terminal reset (RIS).\n A NULL value pointer or unknown mode returns GHOSTTY_INVALID_VALUE.\n\n Input type: GhosttyTerminalModeConfig*"]
     pub const MODE: Type = 34;
-    #[doc = " Callback invoked for unsupported terminal sequence identifiers. Set to\n NULL to ignore unsupported sequences. Capture must also be enabled with\n GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES.\n\n Input type: GhosttyTerminalUnknownSequenceFn"]
+    #[doc = " Callback for escape sequences that libghostty-vt does not implement.\n Set to NULL to stop receiving them.\n\n GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES must also be set, or the\n callback is never called. See the Unsupported Sequences section of the\n terminal documentation for an example.\n\n Input type: GhosttyTerminalUnknownSequenceFn"]
     pub const UNKNOWN_SEQUENCE: Type = 35;
-    #[doc = " Set the maximum content bytes retained for each unsupported terminal\n sequence. A NULL value pointer or zero disables capture and prevents\n unknown-sequence callbacks.\n\n When this limit is hit, the unknown sequence callback will still\n be invoked but `truncated` will be set to true.\n\n Input type: size_t*"]
+    #[doc = " The most bytes of each unsupported sequence to keep and pass to the\n GHOSTTY_TERMINAL_OPT_UNKNOWN_SEQUENCE callback. The same limit applies\n to APC and OSC sequences.\n\n Zero, the default, turns unsupported sequence reporting off. A NULL\n value pointer also sets it to zero.\n\n A sequence longer than the limit is still reported. Its content holds\n the first bytes up to the limit, and `truncated` is true.\n\n Choose a limit that fits the largest sequence you expect. Unknown OSC\n sequences up to 2048 bytes are kept in a buffer the terminal already\n owns, so limits up to 2048 add no memory allocations for OSC. Larger\n limits allocate memory for each unknown OSC sequence. Unknown APC\n sequences are always kept in allocated memory.\n\n Input type: size_t*"]
     pub const UNKNOWN_MAX_BYTES: Type = 36;
     #[doc = " Set the name of the terminfo entry this terminal runs as, reported\n in response to an XTGETTCAP query for \"TN\" (e.g. \"xterm-256color\").\n\n The string data is copied into the terminal. A NULL value pointer\n clears the name (equivalent to setting an empty string). A name\n longer than 128 bytes returns GHOSTTY_INVALID_VALUE.\n\n If this is unset then we don't report anything for an XTGETTCAP\n TN query, because we don't know what the embedding terminal around\n libghostty is advertising itself as.\n\n Input type: GhosttyString*"]
     pub const TERMINFO_NAME: Type = 37;
@@ -3830,80 +3978,6 @@ unsafe extern "C" {
         ref_: TrackedGridRef,
         out_ref: *mut GridRef,
     ) -> Result::Type;
-}
-pub mod OscCommandType {
-    #[doc = " OSC command types.\n"]
-    pub type Type = ::std::os::raw::c_int;
-    pub const INVALID: Type = 0;
-    pub const CHANGE_WINDOW_TITLE: Type = 1;
-    pub const CHANGE_WINDOW_ICON: Type = 2;
-    pub const SEMANTIC_PROMPT: Type = 3;
-    pub const CLIPBOARD_CONTENTS: Type = 4;
-    pub const REPORT_PWD: Type = 5;
-    pub const MOUSE_SHAPE: Type = 6;
-    pub const COLOR_OPERATION: Type = 7;
-    pub const KITTY_COLOR_PROTOCOL: Type = 8;
-    pub const SHOW_DESKTOP_NOTIFICATION: Type = 9;
-    pub const HYPERLINK_START: Type = 10;
-    pub const HYPERLINK_END: Type = 11;
-    pub const CONEMU_SLEEP: Type = 12;
-    pub const CONEMU_SHOW_MESSAGE_BOX: Type = 13;
-    pub const CONEMU_CHANGE_TAB_TITLE: Type = 14;
-    pub const CONEMU_PROGRESS_REPORT: Type = 15;
-    pub const CONEMU_WAIT_INPUT: Type = 16;
-    pub const CONEMU_GUIMACRO: Type = 17;
-    pub const CONEMU_RUN_PROCESS: Type = 18;
-    pub const CONEMU_OUTPUT_ENVIRONMENT_VARIABLE: Type = 19;
-    pub const CONEMU_XTERM_EMULATION: Type = 20;
-    pub const CONEMU_COMMENT: Type = 21;
-    pub const KITTY_TEXT_SIZING: Type = 22;
-    pub const KITTY_CLIPBOARD_PROTOCOL: Type = 23;
-    pub const KITTY_DND_PROTOCOL: Type = 24;
-    pub const CONTEXT_SIGNAL: Type = 25;
-    pub const KITTY_DESKTOP_NOTIFICATION: Type = 26;
-    pub const TYPE_MAX_VALUE: Type = 2147483647;
-}
-pub mod OscCommandData {
-    #[doc = " OSC command data types.\n\n These values specify what type of data to extract from an OSC command\n using `ghostty_osc_command_data`.\n"]
-    pub type Type = ::std::os::raw::c_int;
-    #[doc = " Invalid data type. Never results in any data extraction."]
-    pub const INVALID: Type = 0;
-    #[doc = " Window title string data.\n\n Valid for: GHOSTTY_OSC_COMMAND_CHANGE_WINDOW_TITLE\n\n Output type: const char ** (pointer to null-terminated string)\n\n Lifetime: Valid until the next call to any ghostty_osc_* function with\n the same parser instance. Memory is owned by the parser."]
-    pub const CHANGE_WINDOW_TITLE_STR: Type = 1;
-    #[doc = " Window title string data.\n\n Valid for: GHOSTTY_OSC_COMMAND_CHANGE_WINDOW_TITLE\n\n Output type: const char ** (pointer to null-terminated string)\n\n Lifetime: Valid until the next call to any ghostty_osc_* function with\n the same parser instance. Memory is owned by the parser."]
-    pub const MAX_VALUE: Type = 2147483647;
-}
-unsafe extern "C" {
-    #[doc = " Create a new OSC parser instance.\n\n Creates a new OSC (Operating System Command) parser using the provided\n allocator. The parser must be freed using ghostty_vt_osc_free() when\n no longer needed.\n\n"]
-    pub fn ghostty_osc_new(allocator: *const Allocator, parser: *mut OscParser) -> Result::Type;
-}
-unsafe extern "C" {
-    #[doc = " Free an OSC parser instance.\n\n Releases all resources associated with the OSC parser. After this call,\n the parser handle becomes invalid and must not be used.\n\n"]
-    pub fn ghostty_osc_free(parser: OscParser);
-}
-unsafe extern "C" {
-    #[doc = " Reset an OSC parser instance to its initial state.\n\n Resets the parser state, clearing any partially parsed OSC sequences\n and returning the parser to its initial state. This is useful for\n reusing a parser instance or recovering from parse errors.\n\n"]
-    pub fn ghostty_osc_reset(parser: OscParser);
-}
-unsafe extern "C" {
-    #[doc = " Parse the next byte in an OSC sequence.\n\n Processes a single byte as part of an OSC sequence. The parser maintains\n internal state to track the progress through the sequence. Call this\n function for each byte in the sequence data.\n\n When finished pumping the parser with bytes, call ghostty_osc_end\n to get the final result.\n\n"]
-    pub fn ghostty_osc_next(parser: OscParser, byte: u8);
-}
-unsafe extern "C" {
-    #[doc = " Finalize OSC parsing and retrieve the parsed command.\n\n Call this function after feeding all bytes of an OSC sequence to the parser\n using ghostty_osc_next() with the exception of the terminating character\n (ESC or ST). This function finalizes the parsing process and returns the\n parsed OSC command.\n\n The return value is never NULL. Invalid commands will return a command\n with type GHOSTTY_OSC_COMMAND_INVALID.\n\n The terminator parameter specifies the byte that terminated the OSC sequence\n (typically 0x07 for BEL or 0x5C for ST after ESC). This information is\n preserved in the parsed command so that responses can use the same terminator\n format for better compatibility with the calling program. For commands that\n do not require a response, this parameter is ignored and the resulting\n command will not retain the terminator information.\n\n The returned command handle is valid until the next call to any\n `ghostty_osc_*` function with the same parser instance with the exception\n of command introspection functions such as `ghostty_osc_command_type`.\n\n"]
-    pub fn ghostty_osc_end(parser: OscParser, terminator: u8) -> OscCommand;
-}
-unsafe extern "C" {
-    #[doc = " Get the type of an OSC command.\n\n Returns the type identifier for the given OSC command. This can be used\n to determine what kind of command was parsed and what data might be\n available from it.\n\n"]
-    pub fn ghostty_osc_command_type(command: OscCommand) -> OscCommandType::Type;
-}
-unsafe extern "C" {
-    #[doc = " Extract data from an OSC command.\n\n Extracts typed data from the given OSC command based on the specified\n data type. The output pointer must be of the appropriate type for the\n requested data kind. Valid command types, output types, and memory\n safety information are documented in the `GhosttyOscCommandData` enum.\n\n"]
-    pub fn ghostty_osc_command_data(
-        command: OscCommand,
-        data: OscCommandData::Type,
-        out: *mut ::std::os::raw::c_void,
-    ) -> bool;
 }
 pub mod SgrAttributeTag {
     #[doc = " SGR attribute tags.\n\n These values identify the type of an SGR attribute in a tagged union.\n Use the tag to determine which field in the attribute value union to access.\n"]
