@@ -386,20 +386,16 @@ impl Cell {
 
     /// Every field at once, decoded from the packed value where the linked
     /// build's [`CellLayout`] is known, and read field by field otherwise.
+    /// A caller reading many cells can look the layout up once and call
+    /// [`CellLayout::decode`] itself.
     /// The same values as the individual getters, for a fraction of their
     /// cost: each getter is a call into libghostty.
     #[inline]
     pub fn fields(self) -> Result<CellFields> {
-        let fields = match CellLayout::linked() {
-            Some(layout) => layout.decode(self)?,
-            None => self.fields_one_by_one()?,
-        };
-        debug_assert_eq!(
-            self.fields_one_by_one().ok(),
-            Some(fields),
-            "a decoded cell differs from libghostty's own reading of it"
-        );
-        Ok(fields)
+        match CellLayout::linked() {
+            Some(layout) => layout.decode(self),
+            None => self.fields_one_by_one(),
+        }
     }
 
     fn fields_one_by_one(self) -> Result<CellFields> {
@@ -565,7 +561,8 @@ impl CellLayout {
         })
     }
 
-    /// Every field of `cell`.
+    /// Every field of `cell`. Debug builds check the result against the
+    /// getters.
     ///
     /// # Errors
     ///
@@ -585,7 +582,7 @@ impl CellLayout {
             }
             CellContentTag::BgColorPalette | CellContentTag::BgColorRgb => 0,
         };
-        Ok(CellFields {
+        let fields = CellFields {
             content_tag,
             codepoint,
             style_id: style::Id(self.style_id.of(raw) as ffi::StyleId),
@@ -594,7 +591,13 @@ impl CellLayout {
             hyperlink: self.hyperlink.of(raw) != 0,
             semantic_content: CellSemanticContent::try_from(self.semantic_content.of(raw) as i32)
                 .map_err(|_| Error::InvalidValue)?,
-        })
+        };
+        debug_assert_eq!(
+            cell.fields_one_by_one().ok(),
+            Some(fields),
+            "a decoded cell differs from libghostty's own reading of it"
+        );
+        Ok(fields)
     }
 }
 
