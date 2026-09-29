@@ -92,7 +92,7 @@ pub struct Bytes<'alloc> {
     _phan: PhantomData<&'alloc ffi::Allocator>,
 }
 impl<'alloc> Bytes<'alloc> {
-    /// Allocate `len` bytes with libghostty's default allocator.
+    /// Allocate `len` zeroed bytes with libghostty's default allocator.
     ///
     /// Not really useful except in very niche cases.
     pub fn new(len: usize) -> Result<Self> {
@@ -100,7 +100,7 @@ impl<'alloc> Bytes<'alloc> {
         unsafe { Self::new_inner(std::ptr::null(), len) }
     }
 
-    /// Allocate `len` bytes with a custom allocator.
+    /// Allocate `len` zeroed bytes with a custom allocator.
     ///
     /// Not really useful except in very niche cases.
     pub fn new_with_alloc<'ctx: 'alloc>(
@@ -114,6 +114,9 @@ impl<'alloc> Bytes<'alloc> {
     unsafe fn new_inner(alloc: *const ffi::Allocator, len: usize) -> Result<Self> {
         let raw = unsafe { ffi::ghostty_alloc(alloc, len) };
         let ptr = NonNull::new(raw).ok_or(Error::OutOfMemory)?;
+        // SAFETY: the allocation is `len` bytes and uninitialized; `Deref` hands it out as
+        // `[u8]`, which must be initialized, so it is zeroed first.
+        unsafe { ptr.as_ptr().write_bytes(0, len) };
         Ok(unsafe { Self::from_raw_parts(ptr, len, alloc) })
     }
 
@@ -438,5 +441,12 @@ mod tests {
                 0,
             )
         };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "allocates through libghostty")]
+    fn new_bytes_are_zeroed() {
+        let bytes = super::Bytes::new_with_alloc(&super::Allocator::GLOBAL, 4096).unwrap();
+        assert!(bytes.iter().all(|&b| b == 0));
     }
 }
