@@ -64,23 +64,20 @@ impl<'alloc> Parser<'alloc> {
     /// Finalize OSC parsing and retrieve the parsed command.
     ///
     /// Call this function after feeding all bytes of an OSC sequence to the parser
-    /// using [`Parser::next_byte`] with the exception of the terminating character
-    /// (ESC or ST). This function finalizes the parsing process and returns the
-    /// parsed OSC command. Invalid commands will return a command with type
+    /// using [`Parser::next_byte`], except the byte that ended it. Pass that
+    /// byte as `terminator`. Invalid commands will return a command with type
     /// [`CommandType::Invalid`].
     ///
-    /// The terminator parameter specifies the byte that terminated the OSC
-    /// sequence (typically 0x07 for BEL or 0x5C for ST after ESC).
-    /// This information is preserved in the parsed command so that responses
-    /// can use the same terminator format for better compatibility with the
-    /// calling program. For commands that do not require a response, this
-    /// parameter is ignored and the resulting command will not retain the
-    /// terminator information.
-    #[expect(clippy::missing_panics_doc, reason = "internal invariant")]
+    /// Commands that reply to the program end their reply the same way the
+    /// request ended: a terminator of 0x07 (BEL) gets a BEL reply, and any
+    /// other byte an ST reply. If the program cancelled the sequence with CAN
+    /// (0x18) or SUB (0x1A), pass that byte: the sequence is discarded and the
+    /// command is [`CommandType::Invalid`], whatever it contained.
     pub fn end<'p>(&'p mut self, terminator: u8) -> Command<'p, 'alloc> {
+        // NULL is an invalid or cancelled sequence, not a failure.
         let raw = unsafe { ffi::ghostty_osc_end(self.0.as_raw(), terminator) };
         Command {
-            inner: Object::new(raw).expect("command must not be null"),
+            inner: Object::new(raw).ok(),
             _parser: PhantomData,
         }
     }
@@ -97,7 +94,7 @@ impl Drop for Parser<'_> {
 /// The command can be queried for its type and associated data.
 #[derive(Debug)]
 pub struct Command<'p, 'alloc> {
-    inner: Object<'alloc, ffi::OscCommandImpl>,
+    inner: Option<Object<'alloc, ffi::OscCommandImpl>>,
     _parser: PhantomData<&'p Parser<'alloc>>,
 }
 
@@ -115,10 +112,10 @@ impl<'p> Command<'p, '_> {
         use ffi::OscCommandData as Data;
         use ffi::OscCommandType as Type;
 
-        let raw_type = unsafe { ffi::ghostty_osc_command_type(self.inner.as_raw()) };
+        let raw_type = unsafe { ffi::ghostty_osc_command_type(self.inner.as_ref()?.as_raw()) };
         Some(match raw_type {
             Type::CHANGE_WINDOW_TITLE => CommandType::ChangeWindowTitle {
-                title: self.get(Data::CHANGE_WINDOW_TITLE_STR)?,
+                title: self.c_str(Data::CHANGE_WINDOW_TITLE_STR)?,
             },
             Type::CHANGE_WINDOW_ICON => CommandType::ChangeWindowIcon,
             Type::SEMANTIC_PROMPT => CommandType::SemanticPrompt,
@@ -149,9 +146,10 @@ impl<'p> Command<'p, '_> {
     }
 
     fn get<T>(&self, tag: ffi::OscCommandData::Type) -> Option<T> {
+        let inner = self.inner.as_ref()?;
         let mut value = MaybeUninit::<T>::zeroed();
         let result = unsafe {
-            ffi::ghostty_osc_command_data(self.inner.as_raw(), tag, value.as_mut_ptr().cast())
+            ffi::ghostty_osc_command_data(inner.as_raw(), tag, value.as_mut_ptr().cast())
         };
 
         if result {
@@ -160,6 +158,17 @@ impl<'p> Command<'p, '_> {
         } else {
             None
         }
+    }
+
+    /// A string the command owns, which C hands out as `const char *`.
+    fn c_str(&self, tag: ffi::OscCommandData::Type) -> Option<&'p str> {
+        let ptr: *const std::ffi::c_char = self.get(tag)?;
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: the parser owns the null-terminated string until its next
+        // call, and `'p` borrows the parser for as long as the command lives.
+        unsafe { std::ffi::CStr::from_ptr(ptr) }.to_str().ok()
     }
 }
 
@@ -195,4 +204,36 @@ pub enum CommandType<'p> {
     ConemuXtermEmulation,
     ConemuComment,
     KittyTextSizing,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(bytes: &[u8], terminator: u8, check: impl FnOnce(CommandType<'_>)) {
+        let mut parser = Parser::new().expect("parser");
+        for &byte in bytes {
+            parser.next_byte(byte);
+        }
+        check(parser.end(terminator).command_type());
+    }
+
+    #[test]
+    fn a_title_ended_by_bel_is_read() {
+        parse(b"0;title", 0x07, |c| {
+            assert!(
+                matches!(c, CommandType::ChangeWindowTitle { title: "title" }),
+                "{c:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn invalid_and_cancelled_sequences_are_invalid_commands() {
+        for (bytes, terminator) in [(&b""[..], 0x07), (b"0;title", 0x18), (b"0;title", 0x1a)] {
+            parse(bytes, terminator, |c| {
+                assert!(matches!(c, CommandType::Invalid), "{c:?}")
+            });
+        }
+    }
 }
