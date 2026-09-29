@@ -445,8 +445,9 @@ mod tests {
     #[test]
     fn encode_to_vec_grows_a_vector_with_too_little_spare_room() {
         let mut enc = Encoder::new().expect("an encoder");
-        enc.set_tracking_mode(TrackingMode::Normal).set_format(Format::Sgr).set_size(
-            EncoderSize {
+        enc.set_tracking_mode(TrackingMode::Normal)
+            .set_format(Format::Sgr)
+            .set_size(EncoderSize {
                 screen_width: 800,
                 screen_height: 600,
                 cell_width: 8,
@@ -455,8 +456,7 @@ mod tests {
                 padding_bottom: 0,
                 padding_right: 0,
                 padding_left: 0,
-            },
-        );
+            });
         let mut ev = Event::new().expect("an event");
         ev.set_action(Action::Press)
             .set_button(Some(Button::Four))
