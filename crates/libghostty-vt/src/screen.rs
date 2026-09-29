@@ -388,6 +388,7 @@ impl Cell {
     /// build's [`CellLayout`] is known, and read field by field otherwise.
     /// The same values as the individual getters, for a fraction of their
     /// cost: each getter is a call into libghostty.
+    #[inline]
     pub fn fields(self) -> Result<CellFields> {
         let fields = match CellLayout::linked() {
             Some(layout) => layout.decode(self)?,
@@ -505,6 +506,7 @@ impl Bits {
         })
     }
 
+    #[inline]
     const fn of(self, raw: u64) -> u64 {
         (raw >> self.lsb) & self.mask
     }
@@ -517,6 +519,7 @@ impl CellLayout {
     /// decode (an unknown schema, a missing field, a field wider than its
     /// value type); [`Cell::fields`] then reads each field through the C API.
     #[must_use]
+    #[inline]
     pub fn linked() -> Option<&'static Self> {
         static LAYOUT: OnceLock<Option<CellLayout>> = OnceLock::new();
         LAYOUT
@@ -569,6 +572,7 @@ impl CellLayout {
         clippy::cast_possible_truncation,
         reason = "each field was checked to fit its type when the layout was read"
     )]
+    #[inline]
     pub fn decode(&self, cell: Cell) -> Result<CellFields> {
         let raw = cell.0;
         let content_tag = CellContentTag::try_from(self.content_tag.of(raw) as i32)
