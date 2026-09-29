@@ -9,7 +9,7 @@ use crate::{
         from_optional_result_with_len, from_result, from_result_with_len,
     },
     ffi::{self, TerminalData as Data, TerminalOption as Opt},
-    key, mouse,
+    key, mouse, osc,
     screen::{GridRef, Screen, TrackedGridRef},
     style::{self, Palette, RawPalette, RgbColor},
 };
@@ -2099,8 +2099,8 @@ pub enum ClipboardReadError {
 /// An unsupported terminal sequence, passed to
 /// [`Terminal::on_unknown_sequence`].
 ///
-/// Only APC sequences are currently reported. Additional sequence types may be
-/// added.
+/// New kinds may be added in later versions. Callbacks should ignore any kind
+/// they don't handle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum UnknownSequence<'t> {
@@ -2113,6 +2113,29 @@ pub enum UnknownSequence<'t> {
         /// Whether content was shortened by the byte limit or allocation
         /// failure.
         truncated: bool,
+    },
+    /// Operating System Command (OSC) whose number libghostty-vt does not
+    /// implement.
+    ///
+    /// OSC sequences start with `ESC ]`, followed by a number that identifies
+    /// the command, usually a `;`, and then the command's data. The sequence
+    /// ends with either BEL or ESC followed by a backslash. For example, a
+    /// program might write `ESC ] 7400;status=busy BEL`. For that sequence,
+    /// `content` is `7400;status=busy` and `terminator` is
+    /// [`osc::Terminator::Bel`].
+    Osc {
+        /// Everything between `ESC ]` and the terminator, including the number
+        /// at the start. The bytes are only valid until the callback returns.
+        /// Copy them if you need them later.
+        content: &'t [u8],
+        /// True if the sequence was longer than
+        /// [`Terminal::set_unknown_max_bytes`], or memory ran out while
+        /// reading it. In that case `content` holds only the beginning of the
+        /// sequence.
+        truncated: bool,
+        /// How the program ended the sequence. If you send a reply, end it the
+        /// same way.
+        terminator: osc::Terminator,
     },
 }
 
@@ -2767,17 +2790,34 @@ handlers! {
         // SAFETY: libghostty passes a valid sequence that is borrowed for the
         // callback duration.
         let sequence = unsafe { &*sequence };
-        // Sequence kinds added upstream later are skipped rather than
-        // misreported; `UnknownSequence` is non-exhaustive to grow with them.
-        if sequence.tag == ffi::TerminalUnknownSequenceTag::APC {
-            // SAFETY: The tag says the union holds an APC payload.
-            let apc = unsafe { sequence.value.apc };
-            func(term, UnknownSequence::Apc {
-                // SAFETY: The content is borrowed for the callback duration,
-                // which `UnknownSequence`'s lifetime enforces.
-                content: unsafe { apc.content.to_bytes() },
-                truncated: apc.truncated,
-            });
+        // Sequence kinds and terminators added upstream later are skipped
+        // rather than misreported; the enums are non-exhaustive to grow with
+        // them. This body must not `return` early, since the handler still
+        // has cleanup to do after it.
+        match sequence.tag {
+            ffi::TerminalUnknownSequenceTag::APC => {
+                // SAFETY: The tag says the union holds an APC payload.
+                let apc = unsafe { sequence.value.apc };
+                func(term, UnknownSequence::Apc {
+                    // SAFETY: The content is borrowed for the callback
+                    // duration, which `UnknownSequence`'s lifetime enforces.
+                    content: unsafe { apc.content.to_bytes() },
+                    truncated: apc.truncated,
+                });
+            }
+            ffi::TerminalUnknownSequenceTag::OSC => {
+                // SAFETY: The tag says the union holds an OSC payload.
+                let osc = unsafe { sequence.value.osc };
+                if let Ok(terminator) = osc.terminator.try_into() {
+                    func(term, UnknownSequence::Osc {
+                        // SAFETY: Ditto
+                        content: unsafe { osc.content.to_bytes() },
+                        truncated: osc.truncated,
+                        terminator,
+                    });
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -3081,7 +3121,9 @@ mod tests {
         let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
         terminal
             .on_unknown_sequence(|_term, sequence| {
-                let UnknownSequence::Apc { content, truncated } = sequence;
+                let UnknownSequence::Apc { content, truncated } = sequence else {
+                    panic!("expected an APC, got {sequence:?}");
+                };
                 seen.borrow_mut().push((content.to_vec(), truncated));
             })
             .expect("callback should register");
@@ -3110,6 +3152,57 @@ mod tests {
         assert_eq!(unknown_apcs(Some(7), apc), [(b"unknown".to_vec(), false)]);
         // Content over the limit is still reported, but truncated.
         assert_eq!(unknown_apcs(Some(3), apc), [(b"unk".to_vec(), true)]);
+    }
+
+    /// Write `input` to a terminal with the given unknown sequence limit,
+    /// returning each reported OSC as `(content, truncated, terminator)`.
+    fn unknown_oscs(max: usize, input: &[u8]) -> Vec<(Vec<u8>, bool, osc::Terminator)> {
+        let seen = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new(8, 2).unwrap();
+        terminal
+            .on_unknown_sequence(|_term, sequence| {
+                let UnknownSequence::Osc {
+                    content,
+                    truncated,
+                    terminator,
+                } = sequence
+                else {
+                    panic!("expected an OSC, got {sequence:?}");
+                };
+                seen.borrow_mut()
+                    .push((content.to_vec(), truncated, terminator));
+            })
+            .unwrap()
+            .set_unknown_max_bytes(max)
+            .unwrap();
+        terminal.vt_write(input);
+        drop(terminal);
+        seen.into_inner()
+    }
+
+    #[test]
+    fn unknown_osc_sequences_are_reported() {
+        use osc::Terminator::{Bel, St};
+
+        // The content includes the number, and the terminator is reported so
+        // that a reply can end the same way.
+        assert_eq!(
+            unknown_oscs(64, b"\x1b]7400;status=busy\x07"),
+            [(b"7400;status=busy".to_vec(), false, Bel)]
+        );
+        assert_eq!(
+            unknown_oscs(64, b"\x1b]7400;status=busy\x1b\\"),
+            [(b"7400;status=busy".to_vec(), false, St)]
+        );
+        // Content over the limit is still reported, but truncated.
+        assert_eq!(
+            unknown_oscs(4, b"\x1b]7400;status=busy\x07"),
+            [(b"7400".to_vec(), true, Bel)]
+        );
+        // Nothing is reported for an OSC number libghostty-vt implements, or
+        // for a sequence the program cancelled with CAN.
+        assert!(unknown_oscs(64, b"\x1b]2;title\x07").is_empty());
+        assert!(unknown_oscs(64, b"\x1b]7400;status=busy\x18").is_empty());
     }
 
     #[test]
@@ -3158,7 +3251,9 @@ mod tests {
         let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
         terminal
             .on_unknown_sequence(|_term, sequence| {
-                let UnknownSequence::Apc { content, .. } = sequence;
+                let UnknownSequence::Apc { content, .. } = sequence else {
+                    panic!("expected an APC, got {sequence:?}");
+                };
                 seen.borrow_mut().push(content.to_vec());
             })
             .unwrap()
