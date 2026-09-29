@@ -102,6 +102,7 @@ pub(crate) mod io;
 pub mod key;
 pub mod kitty;
 pub mod log;
+pub(crate) mod manifest;
 pub mod mouse;
 pub mod osc;
 pub mod paste;
