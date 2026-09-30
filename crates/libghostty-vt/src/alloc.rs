@@ -287,19 +287,25 @@ unsafe extern "C" fn _global_remap(
 // Allocator API
 //------------------------------------
 
-/// Adapt a Rust Allocator into a libghostty Allocator.
+/// Adapt a Rust Allocator into a libghostty Allocator, which borrows it.
+///
+/// It takes a reference: libghostty keeps a pointer to the allocator, which
+/// must stay where it is for as long as libghostty may allocate with it.
 #[cfg(feature = "allocator_api")]
-impl<'ctx, A: alloc::Allocator + 'ctx> From<A> for Allocator<'ctx> {
-    fn from(value: A) -> Self {
+impl<'ctx, A: alloc::Allocator> From<&'ctx A> for Allocator<'ctx> {
+    fn from(value: &'ctx A) -> Self {
+        let vtable: &'static ffi::AllocatorVtable = &const {
+            ffi::AllocatorVtable {
+                alloc: Some(_alloc::<A>),
+                free: Some(_free::<A>),
+                resize: Some(_resize),
+                remap: Some(_remap::<A>),
+            }
+        };
         Self {
             inner: ffi::Allocator {
-                ctx: std::ptr::from_ref(value.by_ref()) as *mut std::ffi::c_void,
-                vtable: &ffi::AllocatorVtable {
-                    alloc: Some(_alloc::<A>),
-                    free: Some(_free::<A>),
-                    resize: Some(_resize),
-                    remap: Some(_remap::<A>),
-                },
+                ctx: std::ptr::from_ref(value).cast_mut().cast(),
+                vtable,
             },
             _phan: PhantomData,
         }
@@ -684,6 +690,37 @@ mod tests {
 
     // These tests stay entirely within Rust-owned allocator callbacks so Miri can
     // validate the pointer and initialization flow without executing Ghostty.
+
+    /// libghostty allocates through the allocator it was given, not a copy
+    /// that went away when the conversion returned.
+    #[cfg(feature = "allocator_api")]
+    #[test]
+    fn a_rust_allocator_is_used_where_it_stands() {
+        use std::{cell::Cell, ptr::NonNull};
+
+        use allocator_api2::alloc::{AllocError, Allocator as RustAllocator, Global, Layout};
+
+        #[derive(Default)]
+        struct Counting(Cell<usize>);
+
+        // SAFETY: every call goes to `Global`, which upholds the contract.
+        unsafe impl RustAllocator for Counting {
+            fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+                self.0.set(self.0.get() + 1);
+                Global.allocate(layout)
+            }
+
+            unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+                unsafe { Global.deallocate(ptr, layout) }
+            }
+        }
+
+        let counting = Counting::default();
+        let alloc = super::Allocator::from(&counting);
+        let terminal = crate::Terminal::new_with_alloc(&alloc, 8, 2).unwrap();
+        drop(terminal);
+        assert!(counting.0.get() > 0, "no allocation reached the allocator");
+    }
 
     #[test]
     fn global_allocator_respects_requested_alignment() {
