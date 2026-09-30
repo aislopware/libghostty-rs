@@ -891,6 +891,15 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
             .try_into()
             .map_err(|_| Error::InvalidValue)
     }
+    /// Which part of its prompt the shell redraws after a resize, as the
+    /// last OSC 133;A with a `redraw` option said.
+    ///
+    /// Initially [`PromptRedraw::None`], and again after a full reset.
+    pub fn prompt_redraw(&self) -> Result<PromptRedraw> {
+        self.get::<ffi::TerminalPromptRedraw::Type>(Data::PROMPT_REDRAW)?
+            .try_into()
+            .map_err(|_| Error::InvalidValue)
+    }
     /// Get the current Kitty keyboard protocol flags.
     pub fn kitty_keyboard_flags(&self) -> Result<key::KittyKeyFlags> {
         self.get::<ffi::KittyKeyFlags>(Data::KITTY_KEYBOARD_FLAGS)
@@ -2227,6 +2236,128 @@ pub enum ProgressState {
     Pause = ffi::TerminalProgressState::PAUSE,
 }
 
+/// Which part of its prompt the shell redraws after a resize, and so which
+/// part the terminal clears before reflowing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum PromptRedraw {
+    /// The shell redraws nothing, so nothing is cleared.
+    None = ffi::TerminalPromptRedraw::NONE,
+    /// The shell redraws its whole prompt (`redraw=1`).
+    Full = ffi::TerminalPromptRedraw::FULL,
+    /// The shell redraws only the last row of its prompt (`redraw=last`,
+    /// bash).
+    Last = ffi::TerminalPromptRedraw::LAST,
+}
+
+/// A step of a command the shell reported through shell integration
+/// (OSC 133), passed to [`Terminal::on_semantic_prompt`].
+///
+/// It describes what happened, not how the shell said it: the fields that
+/// don't apply to its [`kind`](Self::kind) are empty. It borrows the
+/// terminal's memory for the duration of the callback, so copy what you
+/// need to keep.
+#[derive(Debug, Copy, Clone)]
+pub struct SemanticPrompt<'t> {
+    ptr: *const ffi::TerminalSemanticPrompt,
+    _phan: PhantomData<&'t ()>,
+}
+
+impl<'t> SemanticPrompt<'t> {
+    unsafe fn from_raw(raw: *const ffi::TerminalSemanticPrompt) -> Self {
+        Self {
+            ptr: raw,
+            _phan: PhantomData,
+        }
+    }
+
+    fn raw(self) -> &'t ffi::TerminalSemanticPrompt {
+        // SAFETY: libghostty passes a valid event that is borrowed for the
+        // callback duration, which `'t` stands for.
+        unsafe { &*self.ptr }
+    }
+
+    /// Which step of the command this is. A kind added to libghostty later
+    /// is an [`Error::InvalidValue`], so ignore what you can't read.
+    pub fn kind(self) -> Result<SemanticPromptKind> {
+        self.raw().kind.try_into().map_err(|_| Error::InvalidValue)
+    }
+
+    /// Which prompt starts, for [`SemanticPromptKind::PromptStart`].
+    /// [`PromptKind::Primary`] for the other kinds.
+    pub fn prompt_kind(self) -> Result<PromptKind> {
+        self.raw()
+            .prompt_kind
+            .try_into()
+            .map_err(|_| Error::InvalidValue)
+    }
+
+    /// The command's exit code, for [`SemanticPromptKind::CommandEnd`] when
+    /// the shell reported one. It may be negative (Windows).
+    #[must_use]
+    pub fn exit_code(self) -> Option<i32> {
+        let raw = self.raw();
+        raw.has_exit_code.then_some(raw.exit_code)
+    }
+
+    /// The decoded command line about to run, for
+    /// [`SemanticPromptKind::OutputStart`]. Empty when the shell sent none
+    /// or it could not be decoded. The shell percent- or printf-encodes it,
+    /// so the decoded bytes need not be UTF-8.
+    #[must_use]
+    pub fn command(self) -> &'t [u8] {
+        // SAFETY: The string is borrowed for the callback duration.
+        unsafe { self.raw().command.to_bytes() }
+    }
+
+    /// What went wrong, for [`SemanticPromptKind::CommandEnd`] when the
+    /// shell said (`err=`). Empty otherwise; the exit code is the usual way
+    /// to tell a failure.
+    #[must_use]
+    pub fn error(self) -> &'t [u8] {
+        // SAFETY: The string is borrowed for the callback duration.
+        unsafe { self.raw().error.to_bytes() }
+    }
+}
+
+/// The step of a command a [`SemanticPrompt`] reports. A command goes
+/// through them in this order, but shells skip steps and repeat prompt
+/// starts, so handle each on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum SemanticPromptKind {
+    /// The shell started drawing a prompt (OSC 133 `A`, `N` or `P`).
+    PromptStart = ffi::SemanticPromptKind::GHOSTTY_SEMANTIC_PROMPT_PROMPT_START,
+    /// The prompt is drawn and the user can type (`B` or `I`).
+    InputStart = ffi::SemanticPromptKind::GHOSTTY_SEMANTIC_PROMPT_INPUT_START,
+    /// The command was submitted and runs; what follows is its output
+    /// (`C`).
+    OutputStart = ffi::SemanticPromptKind::GHOSTTY_SEMANTIC_PROMPT_OUTPUT_START,
+    /// The command finished (`D`).
+    CommandEnd = ffi::SemanticPromptKind::GHOSTTY_SEMANTIC_PROMPT_COMMAND_END,
+}
+
+/// Which prompt a [`SemanticPromptKind::PromptStart`] starts (the `k=`
+/// option).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum PromptKind {
+    /// The main prompt before each command; also when the shell doesn't
+    /// say.
+    Primary = ffi::SemanticPromptPromptKind::GHOSTTY_SEMANTIC_PROMPT_PROMPT_PRIMARY,
+    /// A prompt at the right edge of the line, such as zsh's `RPROMPT`.
+    Right = ffi::SemanticPromptPromptKind::GHOSTTY_SEMANTIC_PROMPT_PROMPT_RIGHT,
+    /// The prompt of an extra line of a command that spans several.
+    Continuation = ffi::SemanticPromptPromptKind::GHOSTTY_SEMANTIC_PROMPT_PROMPT_CONTINUATION,
+    /// Another prompt for an extra line of input, such as bash's `PS2`.
+    /// Shells differ in using this or [`Self::Continuation`], so treat the
+    /// two alike.
+    Secondary = ffi::SemanticPromptPromptKind::GHOSTTY_SEMANTIC_PROMPT_PROMPT_SECONDARY,
+}
+
 //---------------------------------------
 // Callbacks
 //---------------------------------------
@@ -2809,6 +2940,66 @@ handlers! {
         to = <'t>ProgressReportFn(ProgressReport<'t>),
     ) |term, func| {
         func(&term, unsafe { ProgressReport::from_raw(progress) });
+    }
+
+    /// Call the given function when the shell reports a step of a command
+    /// through shell integration (OSC 133): a prompt starts, input starts,
+    /// output starts, or the command ends.
+    ///
+    /// The terminal has already applied the sequence, and nothing after it
+    /// in the same [`Self::vt_write`], when this is called, so the cursor
+    /// is where the shell wrote the mark. A sequence the terminal rejects
+    /// is not reported. The event borrows the terminal's memory for the
+    /// call; nothing is allocated for it.
+    ///
+    /// ```rust
+    /// use std::cell::RefCell;
+    /// use libghostty_vt::Terminal;
+    /// use libghostty_vt::terminal::SemanticPromptKind;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let ends = RefCell::new(Vec::new());
+    /// let mut terminal = Terminal::new(80, 24)?;
+    /// terminal.on_semantic_prompt(|term, event| {
+    ///     if matches!(event.kind(), Ok(SemanticPromptKind::CommandEnd)) {
+    ///         let row = term.cursor_y().unwrap_or(0);
+    ///         ends.borrow_mut().push((row, event.exit_code()));
+    ///     }
+    /// })?;
+    ///
+    /// terminal.vt_write(b"false\r\n\x1b]133;D;1\x07\r\n$ ");
+    /// assert_eq!(*ends.borrow(), [(1, Some(1))]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn on_semantic_prompt(
+        &mut self,
+        tag = SEMANTIC_PROMPT,
+        from = TerminalSemanticPromptFn(event: *const ffi::TerminalSemanticPrompt),
+        to = <'t>SemanticPromptFn(SemanticPrompt<'t>),
+    ) |term, func| {
+        // SAFETY: libghostty passes a valid event that is borrowed for the
+        // callback duration, which `SemanticPrompt`'s lifetime enforces.
+        func(term, unsafe { SemanticPrompt::from_raw(event) });
+    }
+
+    /// Call the given function after the running program fully resets the
+    /// terminal (RIS, `ESC c`), not for a soft reset (DECSTR) or
+    /// [`Self::reset`].
+    ///
+    /// The terminal has already reset itself: its screen, scrollback,
+    /// modes, title and working directory are cleared, and state the
+    /// embedder keeps about them, such as the running command, is stale.
+    /// [`Self::on_title_changed`] and [`Self::on_pwd_changed`] are not
+    /// called for the cleared title and directory. A progress report is
+    /// removed first, through [`Self::on_progress_report`].
+    pub fn on_reset(
+        &mut self,
+        tag = RESET,
+        from = TerminalResetFn(),
+        to = ResetFn(),
+    ) |term, func| {
+        func(term);
     }
 
     /// Call the given function once for each complete sequence that
@@ -3981,6 +4172,113 @@ mod tests {
             .codepoint()
             .unwrap();
         assert_eq!(codepoint, 0xe9);
+    }
+
+    /// What a semantic prompt callback saw: the event and the cursor column.
+    #[derive(Debug, PartialEq, Eq)]
+    struct SeenPrompt {
+        kind: SemanticPromptKind,
+        prompt_kind: PromptKind,
+        exit_code: Option<i32>,
+        command: Vec<u8>,
+        error: Vec<u8>,
+        x: u16,
+    }
+
+    fn semantic_prompts(input: &[u8]) -> Vec<SeenPrompt> {
+        let seen = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new(80, 24).expect("terminal should initialize");
+        terminal
+            .on_semantic_prompt(|term, event| {
+                if let (Ok(kind), Ok(prompt_kind)) = (event.kind(), event.prompt_kind()) {
+                    seen.borrow_mut().push(SeenPrompt {
+                        kind,
+                        prompt_kind,
+                        exit_code: event.exit_code(),
+                        command: event.command().to_vec(),
+                        error: event.error().to_vec(),
+                        x: term.cursor_x().unwrap_or(u16::MAX),
+                    });
+                }
+            })
+            .expect("callback should register");
+        terminal.vt_write(input);
+        drop(terminal);
+        seen.into_inner()
+    }
+
+    #[test]
+    fn semantic_prompt_reports_each_step_where_the_shell_wrote_it() {
+        let seen = semantic_prompts(
+            b"\x1b]133;A\x07$ \x1b]133;P;k=r\x07\x1b]133;B\x07ls\
+              \x1b]133;C;cmdline_url=ls%20-la\x07\r\nout\x1b]133;D;2;err=boom\x07\
+              \x1b]133;L\x07\x1b]133;Z\x07",
+        );
+        let step = |kind, prompt_kind, x| SeenPrompt {
+            kind,
+            prompt_kind,
+            exit_code: None,
+            command: Vec::new(),
+            error: Vec::new(),
+            x,
+        };
+        assert_eq!(
+            seen,
+            [
+                step(SemanticPromptKind::PromptStart, PromptKind::Primary, 0),
+                step(SemanticPromptKind::PromptStart, PromptKind::Right, 2),
+                step(SemanticPromptKind::InputStart, PromptKind::Primary, 2),
+                SeenPrompt {
+                    command: b"ls -la".to_vec(),
+                    ..step(SemanticPromptKind::OutputStart, PromptKind::Primary, 4)
+                },
+                SeenPrompt {
+                    exit_code: Some(2),
+                    error: b"boom".to_vec(),
+                    ..step(SemanticPromptKind::CommandEnd, PromptKind::Primary, 3)
+                },
+            ],
+            "a fresh line (L) and an unknown step (Z) are not reported"
+        );
+    }
+
+    #[test]
+    fn semantic_prompt_command_lines_are_bytes() {
+        let seen = semantic_prompts(b"\x1b]133;C;cmdline_url=%FF%20x\x07\x1b]133;D;-1\x07");
+        assert_eq!(seen[0].command, b"\xff x");
+        assert_eq!(seen[1].exit_code, Some(-1));
+        assert_eq!(seen.len(), 2);
+    }
+
+    #[test]
+    fn reset_is_reported_for_a_full_reset_only() {
+        let seen = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new(80, 24).expect("terminal should initialize");
+        terminal
+            .on_reset(|term| seen.borrow_mut().push(term.cursor_x().unwrap_or(u16::MAX)))
+            .expect("callback should register");
+        terminal.vt_write(b"abc\x1b[!p");
+        terminal.reset();
+        assert!(
+            seen.borrow().is_empty(),
+            "DECSTR and Terminal::reset are not reported"
+        );
+        terminal.vt_write(b"abc\x1bcxy");
+        assert_eq!(terminal.cursor_x().unwrap(), 2);
+        drop(terminal);
+        assert_eq!(seen.into_inner(), [0], "reset before `xy` was printed");
+    }
+
+    #[test]
+    fn prompt_redraw_follows_the_shell_and_a_full_reset() {
+        let mut terminal = Terminal::new(80, 24).unwrap();
+        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::None);
+        terminal.vt_write(b"\x1b]133;A;redraw=1\x07");
+        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::Full);
+        terminal.vt_write(b"\x1b]133;A;redraw=last\x07");
+        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::Last);
+        terminal.vt_write(b"\x1bc");
+        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::None);
     }
 
     #[test]
