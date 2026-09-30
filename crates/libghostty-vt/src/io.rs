@@ -40,8 +40,14 @@ pub fn to_reader<R: Read>(r: &mut R) -> ffi::Reader {
         // the userdata is the writer we need
         let r: &mut R = unsafe { &mut *userdata.cast::<R>() };
 
-        // SAFETY: We trust libghostty to give us valid data
-        let buf = unsafe { std::slice::from_raw_parts_mut(buffer, capacity) };
+        // SAFETY: libghostty passes `capacity` writable bytes, which may be
+        // uninitialised (Zig's reader hands over `undefined` storage). A
+        // `&mut [u8]` must cover initialised bytes, since safe `Read` code
+        // may read them, so they are zeroed first.
+        let buf = unsafe {
+            buffer.write_bytes(0, capacity);
+            std::slice::from_raw_parts_mut(buffer, capacity)
+        };
 
         match r.read(buf) {
             // SAFETY: Ditto
