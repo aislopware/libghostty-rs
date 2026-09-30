@@ -503,6 +503,25 @@ impl Bits {
         })
     }
 
+    /// Whether the field `name` of a packed descriptor holds the C enum
+    /// `type_name`, and the manifest gives that enum the `values` this
+    /// binding was generated with: the decoder turns the bits into enum
+    /// values as they are.
+    fn holds_enum(
+        manifest: &Value,
+        packed: &Value,
+        name: &str,
+        type_name: &str,
+        values: &[(&str, std::ffi::c_int)],
+    ) -> bool {
+        let typed = packed.at(&["bits", name, "type"]).and_then(Value::as_str) == Some(type_name);
+        let known = manifest.at(&["types", type_name, "values"]);
+        typed
+            && values.iter().all(|&(key, value)| {
+                known.and_then(|v| v.get(key)).and_then(Value::as_u64) == u64::try_from(value).ok()
+            })
+    }
+
     #[inline]
     const fn of(self, raw: u64) -> u64 {
         // `lsb` is below 64 (checked when the layout was read), so the
@@ -549,6 +568,46 @@ impl CellLayout {
             32,
         )?;
         if codepoint != grapheme {
+            return None;
+        }
+        let enums = [
+            (
+                "content_tag",
+                "GhosttyCellContentTag",
+                &[
+                    ("CODEPOINT", ffi::CellContentTag::CODEPOINT),
+                    (
+                        "CODEPOINT_GRAPHEME",
+                        ffi::CellContentTag::CODEPOINT_GRAPHEME,
+                    ),
+                    ("BG_COLOR_PALETTE", ffi::CellContentTag::BG_COLOR_PALETTE),
+                    ("BG_COLOR_RGB", ffi::CellContentTag::BG_COLOR_RGB),
+                ][..],
+            ),
+            (
+                "wide",
+                "GhosttyCellWide",
+                &[
+                    ("NARROW", ffi::CellWide::NARROW),
+                    ("WIDE", ffi::CellWide::WIDE),
+                    ("SPACER_TAIL", ffi::CellWide::SPACER_TAIL),
+                    ("SPACER_HEAD", ffi::CellWide::SPACER_HEAD),
+                ][..],
+            ),
+            (
+                "semantic_content",
+                "GhosttyCellSemanticContent",
+                &[
+                    ("OUTPUT", ffi::CellSemanticContent::OUTPUT),
+                    ("INPUT", ffi::CellSemanticContent::INPUT),
+                    ("PROMPT", ffi::CellSemanticContent::PROMPT),
+                ][..],
+            ),
+        ];
+        let enums_known = enums.iter().all(|&(name, type_name, values)| {
+            Bits::holds_enum(manifest, cell, name, type_name, values)
+        });
+        if !enums_known {
             return None;
         }
         Some(Self {
@@ -739,8 +798,9 @@ mod tests {
         assert!(styled && linked && protected);
     }
 
-    /// A manifest without a field, with one too wide for its type, or with
-    /// the two codepoint arms apart is refused, so the getters are used.
+    /// A manifest without a field, with one too wide for its type, with the
+    /// two codepoint arms apart, or with an enum field of another type or
+    /// numbering is refused, so the getters are used.
     #[test]
     fn a_manifest_that_does_not_describe_the_cell_is_refused() {
         let cell = |content_tag: &str, style_width: u32, grapheme_lsb: u32| {
@@ -751,15 +811,18 @@ mod tests {
                     "CODEPOINT":{{"bits":{{"codepoint":{{"lsb":0,"width":21}}}}}},
                     "CODEPOINT_GRAPHEME":{{"bits":{{"codepoint":{{"lsb":{grapheme_lsb},"width":21}}}}}}}}}},
                 "style_id":{{"lsb":26,"width":{style_width}}},
-                "wide":{{"lsb":42,"width":2}},
+                "wide":{{"lsb":42,"width":2,"type":"GhosttyCellWide"}},
                 "protected":{{"lsb":44,"width":1}},
                 "hyperlink":{{"lsb":45,"width":1}},
-                "semantic_content":{{"lsb":46,"width":2}}}}}}}}}}"#
+                "semantic_content":{{"lsb":46,"width":2,"type":"GhosttyCellSemanticContent"}}}}}},
+                "GhosttyCellContentTag":{{"values":{{"CODEPOINT":0,"CODEPOINT_GRAPHEME":1,"BG_COLOR_PALETTE":2,"BG_COLOR_RGB":3}}}},
+                "GhosttyCellWide":{{"values":{{"NARROW":0,"WIDE":1,"SPACER_TAIL":2,"SPACER_HEAD":3}}}},
+                "GhosttyCellSemanticContent":{{"values":{{"OUTPUT":0,"INPUT":1,"PROMPT":2}}}}}}}}"#
             )
         };
         let read =
             |text: String| CellLayout::from_manifest(&manifest::parse(&text).expect("valid JSON"));
-        let tag = r#""content_tag":{"lsb":0,"width":2},"#;
+        let tag = r#""content_tag":{"lsb":0,"width":2,"type":"GhosttyCellContentTag"},"#;
         let good = read(cell(tag, 16, 0)).expect("the layout libghostty writes");
         assert_eq!(Some(good), CellLayout::linked().copied());
         assert_eq!(read(cell("", 16, 0)), None, "no content tag");
@@ -771,5 +834,10 @@ mod tests {
         assert_eq!(read(cell(tag, 16, 1)), None, "codepoint arms apart");
         let outside = cell(tag, 16, 0).replace(r#""lsb":46"#, r#""lsb":63"#);
         assert_eq!(read(outside), None, "a field past bit 63");
+        let untyped = cell(tag, 16, 0).replace(r#","type":"GhosttyCellWide""#, "");
+        assert_eq!(read(untyped), None, "a width without its enum");
+        let renumbered =
+            cell(tag, 16, 0).replace(r#""INPUT":1,"PROMPT":2"#, r#""INPUT":2,"PROMPT":1"#);
+        assert_eq!(read(renumbered), None, "semantic content numbered apart");
     }
 }
