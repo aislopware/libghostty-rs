@@ -507,8 +507,13 @@ impl<'alloc> RenderState<'alloc> {
     /// The render state as of its last [update](Self::update), without
     /// consuming any terminal dirty state: a frame captured when a render hold
     /// began (see [`Terminal::on_render_hold`]) is read back through this.
-    pub fn snapshot(&mut self) -> Snapshot<'alloc, '_> {
-        Snapshot(self)
+    ///
+    /// An update begun and never [ended](Update::end) (its [`Update`]
+    /// forgotten rather than dropped) is ended first, since its styles are not
+    /// in place until then. With nothing pending that costs one call.
+    pub fn snapshot(&mut self) -> Result<Snapshot<'alloc, '_>> {
+        from_result(unsafe { ffi::ghostty_render_state_end_update(self.0.as_raw()) })?;
+        Ok(Snapshot(self))
     }
 
     /// Begin an update of a render state instance from a terminal.
@@ -1495,6 +1500,21 @@ mod tests {
         let snapshot = state.update(&terminal).unwrap();
         assert_eq!(snapshot.dirty().unwrap(), Dirty::Partial);
         assert_eq!(dirty_rows(&mut rows, &snapshot), [1]);
+    }
+
+    #[test]
+    fn a_snapshot_ends_an_update_left_unended() {
+        let mut terminal = Terminal::new(8, 1).unwrap();
+        terminal.vt_write(b"\x1b[1mx");
+        let mut state = RenderState::new().unwrap();
+        std::mem::forget(state.begin_update(&terminal).unwrap());
+        let snapshot = state.snapshot().unwrap();
+        let mut rows = RowIterator::new().unwrap();
+        let mut cells = CellIterator::new().unwrap();
+        let mut iteration = rows.update(&snapshot).unwrap();
+        let row = iteration.next().unwrap();
+        let mut cell = cells.update(row).unwrap();
+        assert!(cell.next().unwrap().style().unwrap().bold);
     }
 
     #[test]
