@@ -2171,17 +2171,21 @@ impl<'t> DesktopNotification<'t> {
         }
     }
 
-    /// Get the notification title, or an empty string when the protocol omits it.
-    pub fn title(self) -> &'t str {
-        // SAFETY: We trust libghostty to give us a valid underlying ptr
-        // AND that the title contains to a valid UTF-8 string.
-        unsafe { (*self.ptr).title.to_str() }
+    /// The notification title, empty when the protocol omits it.
+    ///
+    /// These are the bytes the program wrote, which libghostty does not
+    /// check: they need not be UTF-8.
+    pub fn title(self) -> &'t [u8] {
+        // SAFETY: libghostty gives a valid notification for the callback's
+        // duration, whose title is a pointer and length (NULL when empty,
+        // which `to_bytes` handles).
+        unsafe { (*self.ptr).title.to_bytes() }
     }
-    /// Notification body.
-    pub fn body(self) -> &'t str {
-        // SAFETY: We trust libghostty to give us a valid underlying ptr
-        // AND that the title contains to a valid UTF-8 string.
-        unsafe { (*self.ptr).body.to_str() }
+
+    /// The notification body, as the program wrote it: see [`Self::title`].
+    pub fn body(self) -> &'t [u8] {
+        // SAFETY: as for the title.
+        unsafe { (*self.ptr).body.to_bytes() }
     }
 }
 
@@ -4021,6 +4025,29 @@ mod tests {
             // so it now owns exactly one initialized T allocation.
             (Box::from_raw(dst_ptr), src_addr, dst_addr)
         }
+    }
+
+    /// libghostty passes a notification's text on unchecked, so bytes that
+    /// are not UTF-8 must come out as bytes rather than as a `&str`.
+    #[test]
+    fn a_notification_s_text_comes_out_as_written() {
+        let seen: RefCell<Vec<(Vec<u8>, Vec<u8>)>> = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new(80, 24).unwrap();
+        terminal
+            .on_desktop_notification(|_, n| {
+                seen.borrow_mut()
+                    .push((n.title().to_vec(), n.body().to_vec()));
+            })
+            .unwrap();
+        terminal.vt_write(b"\x1b]9;\xff\xfe\x07");
+        terminal.vt_write(b"\x1b]777;notify;t\xc3;b\x07");
+        assert_eq!(
+            *seen.borrow(),
+            [
+                (b"".to_vec(), b"\xff\xfe".to_vec()),
+                (b"t\xc3".to_vec(), b"b".to_vec())
+            ]
+        );
     }
 
     /// Send an OSC 2 title sequence, then verify `term.title()` returns the
