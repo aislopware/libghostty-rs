@@ -3341,7 +3341,7 @@ unsafe extern "C" {
     pub fn ghostty_terminal_reset(terminal: Terminal);
 }
 unsafe extern "C" {
-    #[doc = " Resize the terminal to the given dimensions.\n\n Changes the number of columns and rows in the terminal. The primary\n screen will reflow content if wraparound mode is enabled; the alternate\n screen does not reflow. If the dimensions are unchanged, this is a no-op.\n\n This also updates the terminal's pixel dimensions (used for image\n protocols and size reports), disables synchronized output mode (allowed\n by the spec so that resize results are shown immediately), and sends an\n in-band size report if mode 2048 is enabled.\n\n If synchronized output was enabled, the GHOSTTY_TERMINAL_OPT_RENDER_HOLD\n callback is invoked to report that the hold ended.\n\n"]
+    #[doc = " Resize the terminal to the given dimensions.\n\n Changes the number of columns and rows in the terminal. The primary\n screen will reflow content if wraparound mode is enabled; the alternate\n screen does not reflow. If the dimensions are unchanged, the grid is\n left as is, but everything below still applies.\n\n This also updates the terminal's pixel dimensions (used for image\n protocols and size reports), disables synchronized output mode (allowed\n by the spec so that resize results are shown immediately), and sends an\n in-band size report if mode 2048 is enabled.\n\n If synchronized output was enabled, the GHOSTTY_TERMINAL_OPT_RENDER_HOLD\n callback is invoked to report that the hold ended.\n\n"]
     pub fn ghostty_terminal_resize(
         terminal: Terminal,
         cols: u16,
@@ -3660,6 +3660,34 @@ const _: () = {
     ["Offset of field: RenderStateOverscan::below"]
         [::std::mem::offset_of!(RenderStateOverscan, below) - 2usize];
 };
+#[doc = " A borrowed view of the per-row dirty flags of a render state.\n\n One flag per row the last update captured, in the order the row\n iterator visits them: `ptr[i]` is the flag of the row the iterator\n reports at position `i`. The memory is owned by the render state and\n is the same memory GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY reads and\n GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY and ghostty_render_state_clean()\n write, so it always shows the current flags. It is only valid as long\n as the render state is not updated.\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct RenderStateRowDirtyView {
+    #[doc = " Pointer to len contiguous row dirty flags."]
+    pub ptr: *const bool,
+    #[doc = " Number of rows."]
+    pub len: usize,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of RenderStateRowDirtyView"][::std::mem::size_of::<RenderStateRowDirtyView>() - 16usize];
+    ["Alignment of RenderStateRowDirtyView"]
+        [::std::mem::align_of::<RenderStateRowDirtyView>() - 8usize];
+    ["Offset of field: RenderStateRowDirtyView::ptr"]
+        [::std::mem::offset_of!(RenderStateRowDirtyView, ptr) - 0usize];
+    ["Offset of field: RenderStateRowDirtyView::len"]
+        [::std::mem::offset_of!(RenderStateRowDirtyView, len) - 8usize];
+};
+impl Default for RenderStateRowDirtyView {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
 #[doc = " The identity of a row across render state updates.\n\n Treat this value as opaque. Two ids are the same when both words are\n equal. No other comparison or interpretation is meaningful, and the\n contents may change between library versions. A zero-initialized id is\n never valid, so it can be used to mean \"no row\".\n\n bool same = a.bits[0] == b.bits[0] && a.bits[1] == b.bits[1];\n\n See \"Row Identity\" in the render state overview for how to use ids.\n"]
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -3721,7 +3749,9 @@ pub mod RenderStateData {
     pub const OVERSCAN: Type = 20;
     #[doc = " The overscan request most recently set with\n  GHOSTTY_RENDER_STATE_OPTION_OVERSCAN (GhosttyRenderStateOverscan).\n  The next update uses this request. Both sides are zero if it was\n  never set."]
     pub const OVERSCAN_REQUEST: Type = 21;
-    #[doc = " The overscan request most recently set with\n  GHOSTTY_RENDER_STATE_OPTION_OVERSCAN (GhosttyRenderStateOverscan).\n  The next update uses this request. Both sides are zero if it was\n  never set."]
+    #[doc = " A borrowed view of every captured row's dirty flag\n  (GhosttyRenderStateRowDirtyView), the bulk alternative to reading\n  GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY row by row. It reads the flags in\n  place, so one call serves a whole frame. The flags matter only while\n  GHOSTTY_RENDER_STATE_DATA_DIRTY is GHOSTTY_RENDER_STATE_DIRTY_PARTIAL:\n  a full redraw covers every row and a clean state none, whatever the\n  flags say, as with ghostty_render_state_row_iterator_next_dirty().\n  The view is only valid as long as the render state is not updated;\n  it is unsafe to use after updating the render state."]
+    pub const ROW_DIRTY: Type = 22;
+    #[doc = " A borrowed view of every captured row's dirty flag\n  (GhosttyRenderStateRowDirtyView), the bulk alternative to reading\n  GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY row by row. It reads the flags in\n  place, so one call serves a whole frame. The flags matter only while\n  GHOSTTY_RENDER_STATE_DATA_DIRTY is GHOSTTY_RENDER_STATE_DIRTY_PARTIAL:\n  a full redraw covers every row and a clean state none, whatever the\n  flags say, as with ghostty_render_state_row_iterator_next_dirty().\n  The view is only valid as long as the render state is not updated;\n  it is unsafe to use after updating the render state."]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod RenderStateOption {
