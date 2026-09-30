@@ -236,6 +236,21 @@ impl<'t, 'alloc: 'cb, 'cb: 't> Formatter<'t, 'alloc, 'cb> {
         from_result(unsafe { ffi::ghostty_formatter_format(self.inner.as_raw(), writer) })
     }
 
+    /// Run the formatter and append its output to `out`.
+    ///
+    /// The safe form of [`Self::format_write`] for the common case: a `Vec`
+    /// only grows its own buffer, so it cannot reach the formatter or its
+    /// terminal. The output streams straight into `out`, with no buffer
+    /// allocated in libghostty and copied out.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::format_write`]; `out` may hold a partial output then.
+    pub fn format_vec(&mut self, out: &mut Vec<u8>) -> Result<()> {
+        // SAFETY: `Vec<u8>`'s `Write` touches nothing but the vector.
+        unsafe { self.format_write(out) }
+    }
+
     /// Run the formatter and return an allocated buffer with the output.
     ///
     /// Each call formats the current terminal state. The buffer is allocated
@@ -473,5 +488,20 @@ mod tests {
             Err(Error::IoError)
         ));
         assert!(!writer.bytes.is_empty() && writer.bytes.len() < expected.len());
+    }
+
+    #[test]
+    fn format_vec_appends_what_format_buf_writes() {
+        let mut terminal = Terminal::new(200, 100).unwrap();
+        for i in 0..100 {
+            terminal.vt_write(format!("{i:0>199}\r\n").as_bytes());
+        }
+        let mut formatter = Formatter::new(&terminal, FormatterOptions::new()).unwrap();
+        let expected = format_buf(&mut formatter);
+
+        let mut out = b"kept".to_vec();
+        formatter.format_vec(&mut out).unwrap();
+        assert_eq!(out[..4], *b"kept");
+        assert_eq!(out[4..], expected);
     }
 }
