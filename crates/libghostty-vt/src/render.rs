@@ -422,6 +422,41 @@ pub struct CellIteration<'alloc, 's> {
     _phan: PhantomData<&'s RowIteration<'alloc, 's>>,
 }
 
+/// The dirty flag of every row a snapshot captured, read in place.
+///
+/// Returned by [`Snapshot::dirty_rows`]: one call for the whole frame, where
+/// [`RowIteration::dirty`] is a call per row. Index `i` is the row a
+/// [row iteration](RowIteration) visits `i`th, which is the position
+/// [`RowIteration::next_dirty`] reports for it (the viewport y without
+/// [overscan](RenderState#overscan)).
+///
+/// Nothing is copied: each read goes to the render state's own flags, so it
+/// sees every [`RowIteration::set_dirty`] and [`Snapshot::clean`] made after
+/// the view was taken. The view borrows the render state like the snapshot
+/// does, so no update can move the flags under it.
+///
+/// The flags name the changed rows only while the global
+/// [dirty state](Snapshot::dirty) is [`Dirty::Partial`]. A [`Dirty::Full`]
+/// frame redraws every row and a [`Dirty::Clean`] one none, whatever the flags
+/// say, as [`RowIteration::next_dirty`] does.
+///
+/// ```compile_fail,E0499
+/// use libghostty_vt::{RenderState, Terminal};
+/// let terminal = Terminal::new(8, 2).unwrap();
+/// let mut state = RenderState::new().unwrap();
+/// let dirty = state.update(&terminal).unwrap().dirty_rows().unwrap();
+/// state.update(&terminal).unwrap(); // The flags may move in an update.
+/// dirty.get(0);
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct DirtyRows<'s> {
+    // A pointer, never a slice: libghostty writes the flags while the view
+    // lives (`set_dirty`, `clean`), which a `&[bool]` would forbid.
+    flags: *const bool,
+    len: usize,
+    _state: PhantomData<&'s ()>,
+}
+
 //--------------------------
 // Impl blocks
 //--------------------------
@@ -735,6 +770,51 @@ impl Snapshot<'_, '_> {
             ffi::RenderStateOption::DIRTY,
             &(dirty as ffi::RenderStateDirty::Type),
         )
+    }
+}
+
+impl<'s> Snapshot<'_, 's> {
+    /// Every captured row's dirty flag, read in place. See [`DirtyRows`].
+    pub fn dirty_rows(&self) -> Result<DirtyRows<'s>> {
+        let view: ffi::RenderStateRowDirtyView = self.get(ffi::RenderStateData::ROW_DIRTY)?;
+        Ok(DirtyRows {
+            flags: view.ptr,
+            len: view.len,
+            _state: PhantomData,
+        })
+    }
+}
+
+impl DirtyRows<'_> {
+    /// How many rows the snapshot captured, overscan included.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether the snapshot captured no row.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The dirty flag of the row at iteration position `i`, or `None` past
+    /// the last row.
+    #[must_use]
+    pub fn get(&self, i: usize) -> Option<bool> {
+        // SAFETY: `i` is in bounds, and libghostty keeps the `len` flags
+        // valid while the render state is not updated, which the borrow
+        // `'s` rules out. A flag is a Zig `bool`, 0 or 1. The read makes no
+        // reference, so it cannot alias libghostty's writes, which only
+        // happen inside calls on this thread (the pointer makes the view
+        // neither `Send` nor `Sync`).
+        (i < self.len).then(|| unsafe { self.flags.add(i).read() })
+    }
+
+    /// The iteration positions of the rows whose flag is set, in order. Each
+    /// flag is read as the iterator reaches it.
+    pub fn positions(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.len).filter(|&i| self.get(i) == Some(true))
     }
 }
 
@@ -1415,6 +1495,75 @@ mod tests {
         let snapshot = state.update(&terminal).unwrap();
         assert_eq!(snapshot.dirty().unwrap(), Dirty::Partial);
         assert_eq!(dirty_rows(&mut rows, &snapshot), [1]);
+    }
+
+    #[test]
+    fn dirty_rows_read_the_row_flags_in_place() {
+        let mut terminal = Terminal::new(8, 3).unwrap();
+        // Park the cursor on the row written below, as moving it dirties the
+        // row it leaves.
+        terminal.vt_write(b"\x1b[2;1H");
+        let mut state = RenderState::new().unwrap();
+        let mut rows = RowIterator::new().unwrap();
+
+        let snapshot = state.update(&terminal).unwrap();
+        let dirty = snapshot.dirty_rows().unwrap();
+        assert_eq!(dirty.len(), 3);
+        assert!(!dirty.is_empty());
+        assert_eq!(dirty.positions().collect::<Vec<_>>(), [0, 1, 2]);
+        assert_eq!(dirty.get(3), None);
+
+        // A flag written through a row shows in the view taken before it, and
+        // agrees with the row's own getter.
+        {
+            let mut iteration = rows.update(&snapshot).unwrap();
+            let mut i = 0;
+            while let Some(row) = iteration.next() {
+                if i != 1 {
+                    row.set_dirty(false).unwrap();
+                }
+                assert_eq!(dirty.get(i), Some(row.dirty().unwrap()));
+                i += 1;
+            }
+        }
+        assert_eq!(dirty.positions().collect::<Vec<_>>(), [1]);
+        snapshot.clean().unwrap();
+        assert_eq!(dirty.positions().count(), 0);
+
+        // The next update flags only the row that changed.
+        terminal.vt_write(b"x");
+        let snapshot = state.update(&terminal).unwrap();
+        assert_eq!(snapshot.dirty().unwrap(), Dirty::Partial);
+        let dirty = snapshot.dirty_rows().unwrap();
+        assert_eq!(dirty.positions().collect::<Vec<_>>(), [1]);
+        assert_eq!(dirty_rows(&mut rows, &snapshot), [1]);
+    }
+
+    #[test]
+    fn dirty_rows_count_overscan_rows_as_the_iteration_does() {
+        let mut terminal = Terminal::new(8, 3).unwrap();
+        for _ in 0..10 {
+            terminal.vt_write(b"x\r\n");
+        }
+        terminal.scroll_viewport(crate::terminal::ScrollViewport::Top);
+        let mut state = RenderState::new().unwrap();
+        state.set_overscan(Overscan { above: 1, below: 2 }).unwrap();
+        let mut rows = RowIterator::new().unwrap();
+
+        let snapshot = state.update(&terminal).unwrap();
+        // Nothing above the top: the view is the viewport and two rows below.
+        assert_eq!(sides(snapshot.overscan().unwrap()), (0, 2));
+        let dirty = snapshot.dirty_rows().unwrap();
+        assert_eq!(dirty.len(), 5);
+        let (viewport_ys, positions) = row_positions(&mut rows, &snapshot);
+        assert_eq!(viewport_ys.len(), dirty.len());
+        assert_eq!(
+            dirty.positions().collect::<Vec<_>>(),
+            positions
+                .iter()
+                .map(|&y| usize::from(y))
+                .collect::<Vec<_>>()
+        );
     }
 
     /// Collect the viewport y of every row an iteration visits, along with
