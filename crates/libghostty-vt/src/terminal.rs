@@ -226,9 +226,14 @@ pub use ffi::{SizeReportSize, TerminalScrollbar as Scrollbar};
 #[derive(Debug)]
 pub struct Terminal<'alloc: 'cb, 'cb> {
     pub(crate) inner: Object<'alloc, ffi::TerminalImpl>,
-    // Keep callbacks in a heap allocation so C can store a userdata pointer
-    // to the VTable itself. That pointer remains stable even if Terminal moves.
-    vtable: Box<VTable<'alloc, 'cb>>,
+    // The callbacks, allocated when the first one is registered, so C can
+    // keep a userdata pointer to the VTable itself. A raw pointer from
+    // `Box::into_raw` rather than a `Box`: moving a `Box` retags it, which
+    // under Stacked Borrows invalidates the pointer C holds, and the
+    // callbacks reborrow that pointer. The view a callback is handed has
+    // none, so a callback allocates nothing.
+    vtable: Option<NonNull<VTable<'alloc, 'cb>>>,
+    _owns: PhantomData<Box<VTable<'alloc, 'cb>>>,
 }
 
 /// Default visual style used when the cursor style is reset.
@@ -284,7 +289,8 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     pub(crate) unsafe fn from_raw(raw: ffi::Terminal) -> Result<Self> {
         Ok(Self {
             inner: Object::new(raw)?,
-            vtable: Box::new(VTable::default()),
+            vtable: None,
+            _owns: PhantomData,
         })
     }
 
@@ -1191,6 +1197,11 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
 impl Drop for Terminal<'_, '_> {
     fn drop(&mut self) {
         unsafe { ffi::ghostty_terminal_free(self.inner.as_raw()) }
+        if let Some(vtable) = self.vtable.take() {
+            // SAFETY: the pointer came from `Box::into_raw` and is freed only
+            // here, after the terminal that could call through it is gone.
+            drop(unsafe { Box::from_raw(vtable.as_ptr()) });
+        }
     }
 }
 
@@ -2402,10 +2413,6 @@ pub enum PromptKind {
 ///     func(&terminal, slice)
 /// }
 /// ```
-///
-/// The body is evaluated into the handler's result, so it must not `return`
-/// early: the generated handler still has a temporary vtable to drop after
-/// it.
 macro_rules! handlers {
     {
         $(
@@ -2450,37 +2457,37 @@ macro_rules! handlers {
                     let vtable = unsafe { &mut *ud.cast::<VTable<'_, '_>>() };
 
                     let obj = $crate::alloc::Object::new(t).expect("received null terminal ptr in callback - this is a bug!");
-                    // Build a temporary borrowed Terminal view for the callback
-                    // without taking ownership of the underlying ghostty terminal.
-                    let mut term = ::core::mem::ManuallyDrop::new($crate::terminal::Terminal::<'_, '_> {
+                    // A borrowed view of the terminal for the callback, which
+                    // never frees it and holds no callbacks.
+                    let term = ::core::mem::ManuallyDrop::new($crate::terminal::Terminal::<'_, '_> {
                         inner: obj,
-                        vtable: ::core::default::Default::default(),
+                        vtable: None,
+                        _owns: ::core::marker::PhantomData,
                     });
                     let $t: &$crate::terminal::Terminal = &term;
                     let $func = vtable.$name.as_deref_mut()
                         .expect("no handler set but callback is still called - this is a bug!");
-                    let ret = $block;
-
-                    // SAFETY: The temporary vtable was allocated solely to satisfy
-                    // the Terminal layout expected by the callback signature. Drop
-                    // it explicitly while intentionally leaving the borrowed
-                    // terminal handle itself untouched.
-                    unsafe { ::core::ptr::drop_in_place(&mut term.vtable) };
-
-                    ret
+                    $block
                 }
 
-                self.vtable.$name = Some(::std::boxed::Box::new(f));
+                let vtable = match self.vtable {
+                    Some(vtable) => vtable,
+                    None => {
+                        let vtable = ::std::boxed::Box::into_raw(::std::boxed::Box::new(VTable::default()));
+                        // SAFETY: `Box::into_raw` never returns null.
+                        let vtable = unsafe { ::std::ptr::NonNull::new_unchecked(vtable) };
+                        self.vtable = Some(vtable);
+                        vtable
+                    }
+                };
+                // SAFETY: the VTable is live until the terminal drops, and
+                // `&mut self` rules out a callback running meanwhile (they
+                // only get a `&Terminal`), so this is its only access.
+                unsafe { (*vtable.as_ptr()).$name = Some(::std::boxed::Box::new(f)) };
 
-                // USERDATA is a raw pointer option: pass the heap allocation
-                // itself, not the address of the Box smart pointer field stored
-                // inline in Terminal.
-                //
-                // Derive the pointer from a mutable reference so it carries
-                // write provenance – the callback later reborrows it as &mut.
-                let userdata = std::ptr::from_mut::<VTable<'alloc, 'cb>>(self.vtable.as_mut())
-                    as *const ::std::ffi::c_void;
-                self.set_ptr($crate::ffi::TerminalOption::USERDATA, userdata)?;
+                // USERDATA is the VTable itself, with the write provenance of
+                // `Box::into_raw`: the callback reborrows it as `&mut`.
+                self.set_ptr($crate::ffi::TerminalOption::USERDATA, vtable.as_ptr().cast_const().cast())?;
 
                 // The callback must be coerced into a function *pointer*
                 // and not a function *item* (which is a ZST whose address is meaningless).
