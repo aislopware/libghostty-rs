@@ -2908,6 +2908,18 @@ pub type TerminalDesktopNotificationFn = ::std::option::Option<
         notification: *const TerminalDesktopNotification,
     ),
 >;
+pub mod TerminalPromptRedraw {
+    #[doc = " Which part of its prompt the shell redraws after a resize.\n\n Before reflowing the primary screen, the terminal clears the part of the\n prompt at the cursor that the shell says it will draw again. A shell\n reports this with the `redraw` option of OSC 133;A. A terminal starts at\n `GHOSTTY_TERMINAL_PROMPT_REDRAW_NONE`, and a full reset (RIS) returns to\n it.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The shell redraws nothing, so nothing is cleared."]
+    pub const NONE: Type = 0;
+    #[doc = " The shell redraws its whole prompt (`redraw=1`)."]
+    pub const FULL: Type = 1;
+    #[doc = " The shell redraws only the last row of its prompt (`redraw=last`,\n bash)."]
+    pub const LAST: Type = 2;
+    #[doc = " The shell redraws only the last row of its prompt (`redraw=last`,\n bash)."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
 pub mod TerminalProgressState {
     #[doc = " State of a terminal progress report.\n"]
     pub type Type = ::std::os::raw::c_int;
@@ -2963,6 +2975,96 @@ pub type TerminalProgressReportFn = ::std::option::Option<
         userdata: *mut ::std::os::raw::c_void,
         report: *const TerminalProgressReport,
     ),
+>;
+pub mod SemanticPromptKind {
+    #[doc = " The step of a command that a shell integration event reports.\n\n More kinds may be added in later versions, so ignore any kind you don't\n handle.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Never reported. This exists so that a zeroed value is not mistaken\n for a real event."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_INVALID: Type = 0;
+    #[doc = " The shell started drawing a prompt. `prompt_kind` says which one."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_PROMPT_START: Type = 1;
+    #[doc = " The prompt is drawn and the user can start typing a command."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_INPUT_START: Type = 2;
+    #[doc = " The user submitted the command and it started running. Anything the\n terminal receives after this is the command's output."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_OUTPUT_START: Type = 3;
+    #[doc = " The command finished running."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_COMMAND_END: Type = 4;
+    #[doc = " The command finished running."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_MAX_VALUE: Type = 2147483647;
+}
+pub mod SemanticPromptPromptKind {
+    #[doc = " Which prompt a `GHOSTTY_SEMANTIC_PROMPT_PROMPT_START` event starts.\n\n Most shells only draw a primary prompt. Some also draw a prompt on the\n right side of the line, or a prompt at the start of each extra line\n when a command spans several lines.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The main prompt shown before each command. This is used when the\n shell doesn't say which prompt it is drawing."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_PROMPT_PRIMARY: Type = 0;
+    #[doc = " A prompt drawn at the right edge of the line, such as zsh's\n RPROMPT."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_PROMPT_RIGHT: Type = 1;
+    #[doc = " A prompt at the start of an extra line of a command that spans\n several lines."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_PROMPT_CONTINUATION: Type = 2;
+    #[doc = " Another prompt for an extra line of input, such as bash's PS2.\n Shells differ in whether they report extra lines as continuation or\n secondary prompts, so most applications should treat the two the\n same."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_PROMPT_SECONDARY: Type = 3;
+    #[doc = " Another prompt for an extra line of input, such as bash's PS2.\n Shells differ in whether they report extra lines as continuation or\n secondary prompts, so most applications should treat the two the\n same."]
+    pub const GHOSTTY_SEMANTIC_PROMPT_PROMPT_MAX_VALUE: Type = 2147483647;
+}
+#[doc = " A shell integration event, passed to the\n `GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT` callback.\n\n `kind` says which step of the command this is. The other fields only\n carry information for the kinds listed on each field, and are zero or\n empty otherwise.\n\n Strings are only valid during the callback. Copy them if you need them\n later.\n\n This is a sized struct. Later versions may add fields at the end, and\n `size` tells you which fields are present. Every field below has been\n present since this struct was introduced, so you only need to check\n `size` before reading fields added later. Two fields are likely to be\n added in the future:\n\n - An identifier the shell assigns to each command.\n - A flag on `GHOSTTY_SEMANTIC_PROMPT_PROMPT_START` that says the shell\n   redrew a prompt it had already drawn, instead of starting a new one.\n\n Neither exists yet.\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct TerminalSemanticPrompt {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " Which step of the command this event reports."]
+    pub kind: SemanticPromptKind::Type,
+    #[doc = " Which prompt is starting. Set for\n `GHOSTTY_SEMANTIC_PROMPT_PROMPT_START`. Always\n `GHOSTTY_SEMANTIC_PROMPT_PROMPT_PRIMARY` for other kinds."]
+    pub prompt_kind: SemanticPromptPromptKind::Type,
+    #[doc = " True if the shell reported the command's exit code. Only ever true\n for `GHOSTTY_SEMANTIC_PROMPT_COMMAND_END`."]
+    pub has_exit_code: bool,
+    #[doc = " The command's exit code. Only meaningful when `has_exit_code` is\n true. Exit codes can be negative, for example on Windows, so use\n `has_exit_code` rather than a special value to tell whether one was\n reported."]
+    pub exit_code: i32,
+    #[doc = " The command line that is about to run, for\n `GHOSTTY_SEMANTIC_PROMPT_OUTPUT_START`. The shell sends it encoded,\n and this is the decoded text. Empty (len=0) if the shell didn't send\n one or it couldn't be decoded."]
+    pub command: String,
+    #[doc = " A description of what went wrong, for\n `GHOSTTY_SEMANTIC_PROMPT_COMMAND_END` when the shell sent one. Empty\n (len=0) otherwise. Few shells send this. The exit code is the usual\n way to tell whether a command failed."]
+    pub error: String,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalSemanticPrompt"][::std::mem::size_of::<TerminalSemanticPrompt>() - 56usize];
+    ["Alignment of TerminalSemanticPrompt"]
+        [::std::mem::align_of::<TerminalSemanticPrompt>() - 8usize];
+    ["Offset of field: TerminalSemanticPrompt::size"]
+        [::std::mem::offset_of!(TerminalSemanticPrompt, size) - 0usize];
+    ["Offset of field: TerminalSemanticPrompt::kind"]
+        [::std::mem::offset_of!(TerminalSemanticPrompt, kind) - 8usize];
+    ["Offset of field: TerminalSemanticPrompt::prompt_kind"]
+        [::std::mem::offset_of!(TerminalSemanticPrompt, prompt_kind) - 12usize];
+    ["Offset of field: TerminalSemanticPrompt::has_exit_code"]
+        [::std::mem::offset_of!(TerminalSemanticPrompt, has_exit_code) - 16usize];
+    ["Offset of field: TerminalSemanticPrompt::exit_code"]
+        [::std::mem::offset_of!(TerminalSemanticPrompt, exit_code) - 20usize];
+    ["Offset of field: TerminalSemanticPrompt::command"]
+        [::std::mem::offset_of!(TerminalSemanticPrompt, command) - 24usize];
+    ["Offset of field: TerminalSemanticPrompt::error"]
+        [::std::mem::offset_of!(TerminalSemanticPrompt, error) - 40usize];
+};
+impl Default for TerminalSemanticPrompt {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Callback function type for semantic_prompt.\n\n Called when the shell reports a step of a command. Each command goes\n through four steps, in this order: the prompt starts, input starts,\n output starts, and the command ends. Then the next prompt starts.\n\n Shells differ in what they report. Many don't send the command line or\n the exit code, and some skip steps, so handle each event on its own\n instead of expecting a strict order. A shell may also start the same\n prompt more than once, for example when it redraws the prompt after a\n resize, so treat a repeated `GHOSTTY_SEMANTIC_PROMPT_PROMPT_START` as\n harmless.\n\n The terminal has already updated its screen when this is called. A\n sequence the terminal rejects as malformed is never reported.\n\n              call.\n"]
+pub type TerminalSemanticPromptFn = ::std::option::Option<
+    unsafe extern "C" fn(
+        terminal: Terminal,
+        userdata: *mut ::std::os::raw::c_void,
+        event: *const TerminalSemanticPrompt,
+    ),
+>;
+#[doc = " Callback function type for reset.\n\n Called when the running program performs a full reset (RIS, `ESC c`).\n A full reset clears the screen and scrollback, returns modes to their\n defaults, and clears the title and working directory. Use this callback\n to reset any state your application keeps about what's running in the\n terminal, such as the current command.\n\n The terminal has already reset itself when this is called. The\n GHOSTTY_TERMINAL_OPT_TITLE_CHANGED and GHOSTTY_TERMINAL_OPT_PWD_CHANGED\n callbacks are not called for the cleared title and working directory,\n so update anything you show for them here. A full reset also removes\n any progress report. If you set GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT,\n that callback is called before this one.\n\n A soft reset (DECSTR, `CSI ! p`) only resets a few modes and doesn't\n call this.\n\n"]
+pub type TerminalResetFn = ::std::option::Option<
+    unsafe extern "C" fn(terminal: Terminal, userdata: *mut ::std::os::raw::c_void),
 >;
 #[doc = " Callback function type for color scheme queries (CSI ? 996 n).\n\n Called when the terminal receives a color scheme device status report\n query. Return true and fill *out_scheme with the current color scheme,\n or return false to silently ignore the query.\n\n"]
 pub type TerminalColorSchemeFn = ::std::option::Option<
@@ -3122,7 +3224,11 @@ pub mod TerminalOption {
     pub const RESIZE_PULL_SCROLLBACK: Type = 40;
     #[doc = " Callback invoked when the running program asks the terminal to\n stop updating the screen and when it allows updates again. Today\n this is driven by synchronized output (mode 2026). Set to NULL to\n ignore these events.\n\n See GhosttyTerminalRenderHoldFn for how to use this in a renderer.\n\n Input type: GhosttyTerminalRenderHoldFn"]
     pub const RENDER_HOLD: Type = 41;
-    #[doc = " Callback invoked when the running program asks the terminal to\n stop updating the screen and when it allows updates again. Today\n this is driven by synchronized output (mode 2026). Set to NULL to\n ignore these events.\n\n See GhosttyTerminalRenderHoldFn for how to use this in a renderer.\n\n Input type: GhosttyTerminalRenderHoldFn"]
+    #[doc = " Callback invoked when the shell reports a step of a command: a prompt\n starts, input starts, output starts, or the command ends. Set to NULL\n to ignore these events.\n\n Input type: GhosttyTerminalSemanticPromptFn"]
+    pub const SEMANTIC_PROMPT: Type = 42;
+    #[doc = " Callback invoked after the running program performs a full reset\n (RIS, ESC c). Set to NULL to ignore resets.\n\n Input type: GhosttyTerminalResetFn"]
+    pub const RESET: Type = 43;
+    #[doc = " Callback invoked after the running program performs a full reset\n (RIS, ESC c). Set to NULL to ignore resets.\n\n Input type: GhosttyTerminalResetFn"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod TerminalData {
@@ -3212,7 +3318,9 @@ pub mod TerminalData {
     pub const CLIPBOARD_WRITE_MAX_BYTES: Type = 40;
     #[doc = " The mouse pointer shape requested by the application through OSC 22.\n\n Initially GHOSTTY_MOUSE_SHAPE_TEXT. Excludes host hover overrides.\n\n Output type: GhosttyMouseShape *"]
     pub const MOUSE_SHAPE: Type = 41;
-    #[doc = " The mouse pointer shape requested by the application through OSC 22.\n\n Initially GHOSTTY_MOUSE_SHAPE_TEXT. Excludes host hover overrides.\n\n Output type: GhosttyMouseShape *"]
+    #[doc = " Which part of its prompt the shell redraws after a resize, as the last\n OSC 133;A with a `redraw` option said.\n\n Initially GHOSTTY_TERMINAL_PROMPT_REDRAW_NONE, and again after a full\n reset.\n\n Output type: GhosttyTerminalPromptRedraw *"]
+    pub const PROMPT_REDRAW: Type = 42;
+    #[doc = " Which part of its prompt the shell redraws after a resize, as the last\n OSC 133;A with a `redraw` option said.\n\n Initially GHOSTTY_TERMINAL_PROMPT_REDRAW_NONE, and again after a full\n reset.\n\n Output type: GhosttyTerminalPromptRedraw *"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 unsafe extern "C" {
