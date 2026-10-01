@@ -57,6 +57,14 @@ impl<'t, 's> FormatterOptions<'t, 's> {
         self.inner.trim = value;
         self
     }
+    /// Specify whether VT output carries every row's prompt flag and every
+    /// cell's semantic content (OSC 133), so a replay into a fresh terminal
+    /// restores them. Rows with no text but a prompt flag are emitted too.
+    /// No effect with [`with_unwrap`](Self::with_unwrap).
+    pub fn with_semantic_prompt(mut self, value: bool) -> Self {
+        self.inner.semantic_prompt = value;
+        self
+    }
     /// Specify the selection to restrict output to a range.
     ///
     /// If a selection is not given, the formatter defaults to formatting
@@ -364,6 +372,22 @@ mod tests {
         let len = formatter.format_buf(&mut buf).unwrap();
         buf.truncate(len);
         buf
+    }
+
+    #[test]
+    fn vt_output_carries_the_semantic_prompt_state_when_asked() {
+        let mut terminal = Terminal::new(20, 3).unwrap();
+        terminal.vt_write(b"\x1b]133;A\x07$ \x1b]133;B\x07ls\r\n\x1b]133;C\x07out");
+        let vt = |semantic| {
+            let options = FormatterOptions::new()
+                .with_format(Format::Vt)
+                .with_semantic_prompt(semantic);
+            format_buf(&mut Formatter::new(&terminal, options).unwrap())
+        };
+        let with = vt(true);
+        let has = |bytes: &[u8]| bytes.windows(4).any(|w| w == b"133;");
+        assert!(has(&with), "{}", String::from_utf8_lossy(&with));
+        assert!(!has(&vt(false)), "only when asked");
     }
 
     #[test]
