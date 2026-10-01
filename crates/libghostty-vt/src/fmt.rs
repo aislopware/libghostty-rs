@@ -117,7 +117,9 @@ impl<'t, 's> FormatterOptions<'t, 's> {
 
     // --- Screen settings --- //
 
-    /// Specify whether to emit cursor position using CUP (CSI H).
+    /// Specify whether to emit cursor position using CUP (CSI H), relative to the margins
+    /// under origin mode. From a terminal formatter this also emits the cursor's shape
+    /// (DECSCUSR) when a program set one, and the state DECSC saved, saved again with DECSC.
     pub fn with_cursor(mut self, value: bool) -> Self {
         self.inner.extra.screen.cursor = value;
         self
@@ -137,7 +139,7 @@ impl<'t, 's> FormatterOptions<'t, 's> {
         self.inner.extra.screen.protection = value;
         self
     }
-    /// Emit Kitty keyboard protocol state using CSI > u and CSI = sequences.
+    /// Emit the Kitty keyboard protocol flag stack using CSI = u and CSI > u sequences.
     pub fn with_kitty_keyboard(mut self, value: bool) -> Self {
         self.inner.extra.screen.kitty_keyboard = value;
         self

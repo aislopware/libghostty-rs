@@ -3467,7 +3467,7 @@ unsafe extern "C" {
 pub struct FormatterScreenExtra {
     #[doc = " Size of this struct in bytes. Must be set to sizeof(GhosttyFormatterScreenExtra)."]
     pub size: usize,
-    #[doc = " Emit cursor position using CUP (CSI H)."]
+    #[doc = " Emit cursor position using CUP (CSI H), relative to the margins under\n origin mode. From a terminal formatter, also the cursor's shape\n (DECSCUSR) when a program set one, and the state DECSC saved, saved\n again with DECSC."]
     pub cursor: bool,
     #[doc = " Emit current SGR style state based on the cursor's active style_id."]
     pub style: bool,
@@ -3475,7 +3475,7 @@ pub struct FormatterScreenExtra {
     pub hyperlink: bool,
     #[doc = " Emit character protection mode using DECSCA."]
     pub protection: bool,
-    #[doc = " Emit Kitty keyboard protocol state using CSI > u and CSI = sequences."]
+    #[doc = " Emit the Kitty keyboard protocol flag stack using CSI = u and CSI > u sequences."]
     pub kitty_keyboard: bool,
     #[doc = " Emit character set designations and invocations."]
     pub charsets: bool,
