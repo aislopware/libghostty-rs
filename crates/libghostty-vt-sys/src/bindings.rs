@@ -2441,6 +2441,72 @@ const _: () = {
     ["Offset of field: TerminalScrollbar::len"]
         [::std::mem::offset_of!(TerminalScrollbar, len) - 16usize];
 };
+#[doc = " Memory held by a terminal.\n\n Read with ghostty_terminal_get() and\n `GHOSTTY_TERMINAL_DATA_MEMORY_USAGE`. This helps applications that host\n many terminals stay within a memory budget, for example by compressing\n or closing the terminals that hold the most memory first.\n\n Most of a terminal's memory goes to its screen contents and scrollback,\n which are stored in fixed-size blocks called pages. Resident bytes are\n the physical memory pages use right now, and are the figure to budget\n against. Virtual bytes are the address space reserved for pages.\n Compressing scrollback lowers the resident figure but not the virtual\n one, because each page's space stays reserved for decompression.\n\n This is a sized struct. Set `size` before the call, most easily with\n GHOSTTY_INIT_SIZED(). Later versions of libghostty-vt may add fields to\n the end of this struct, and the size tells the library which version\n your program was compiled against. This lets older programs keep working\n with newer versions of the library.\n\n Each screen has its own set of fields, named with a `primary_` or\n `alternate_` prefix. The primary screen holds shell output and all of\n the scrollback. The alternate screen is used by full-screen programs\n such as text editors, and its fields are all zero until a program first\n switches to it. Add the two sets together for the terminal's total.\n\n Everything the terminal displays is stored inside pages, including\n colors, styles and hyperlinks, so those are already part of the page\n figures. Images are stored separately and have their own fields. Small\n structures outside of pages, such as the window title and internal\n bookkeeping, are not counted. They are small next to the pages once a\n terminal has any scrollback.\n\n On macOS, the operating system takes back memory freed by compression\n lazily, when something else needs it. Until then, the memory use the\n system reports for your process (its RSS) can be higher than the\n resident figures here.\n\n"]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct TerminalMemoryUsage {
+    #[doc = " Size of this struct in bytes. Set by the caller."]
+    pub size: usize,
+    #[doc = " Whether compressing scrollback can free memory on this platform. When\n false, ghostty_terminal_compress() reports\n `GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED` and the compressed\n fields are always zero. To reduce a terminal's memory on such a\n platform, you have to do something else, such as closing it."]
+    pub compression_supported: bool,
+    #[doc = " Number of pages in the primary screen, including compressed pages."]
+    pub primary_pages: u64,
+    #[doc = " Bytes of address space reserved for the primary screen's pages. This\n includes compressed pages and spare pages kept ready for reuse.\n Always at least `primary_resident_bytes`."]
+    pub primary_virtual_bytes: u64,
+    #[doc = " Bytes of physical memory used by the primary screen's pages. A\n compressed page counts only its compressed size. Use this figure for\n memory budgets."]
+    pub primary_resident_bytes: u64,
+    #[doc = " Number of the primary screen's pages that are compressed."]
+    pub primary_compressed_pages: u64,
+    #[doc = " Bytes of compressed data held for the primary screen's compressed\n pages. This is already included in `primary_resident_bytes`."]
+    pub primary_compressed_bytes: u64,
+    #[doc = " Bytes of image data stored for the primary screen through the Kitty\n graphics protocol. This is not included in `primary_resident_bytes`.\n Always zero when libghostty-vt is built without Kitty graphics."]
+    pub primary_image_bytes: u64,
+    #[doc = " The same as `primary_pages`, for the alternate screen."]
+    pub alternate_pages: u64,
+    #[doc = " The same as `primary_virtual_bytes`, for the alternate screen."]
+    pub alternate_virtual_bytes: u64,
+    #[doc = " The same as `primary_resident_bytes`, for the alternate screen."]
+    pub alternate_resident_bytes: u64,
+    #[doc = " The same as `primary_compressed_pages`, for the alternate screen."]
+    pub alternate_compressed_pages: u64,
+    #[doc = " The same as `primary_compressed_bytes`, for the alternate screen."]
+    pub alternate_compressed_bytes: u64,
+    #[doc = " The same as `primary_image_bytes`, for the alternate screen."]
+    pub alternate_image_bytes: u64,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalMemoryUsage"][::std::mem::size_of::<TerminalMemoryUsage>() - 112usize];
+    ["Alignment of TerminalMemoryUsage"][::std::mem::align_of::<TerminalMemoryUsage>() - 8usize];
+    ["Offset of field: TerminalMemoryUsage::size"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, size) - 0usize];
+    ["Offset of field: TerminalMemoryUsage::compression_supported"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, compression_supported) - 8usize];
+    ["Offset of field: TerminalMemoryUsage::primary_pages"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, primary_pages) - 16usize];
+    ["Offset of field: TerminalMemoryUsage::primary_virtual_bytes"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, primary_virtual_bytes) - 24usize];
+    ["Offset of field: TerminalMemoryUsage::primary_resident_bytes"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, primary_resident_bytes) - 32usize];
+    ["Offset of field: TerminalMemoryUsage::primary_compressed_pages"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, primary_compressed_pages) - 40usize];
+    ["Offset of field: TerminalMemoryUsage::primary_compressed_bytes"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, primary_compressed_bytes) - 48usize];
+    ["Offset of field: TerminalMemoryUsage::primary_image_bytes"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, primary_image_bytes) - 56usize];
+    ["Offset of field: TerminalMemoryUsage::alternate_pages"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, alternate_pages) - 64usize];
+    ["Offset of field: TerminalMemoryUsage::alternate_virtual_bytes"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, alternate_virtual_bytes) - 72usize];
+    ["Offset of field: TerminalMemoryUsage::alternate_resident_bytes"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, alternate_resident_bytes) - 80usize];
+    ["Offset of field: TerminalMemoryUsage::alternate_compressed_pages"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, alternate_compressed_pages) - 88usize];
+    ["Offset of field: TerminalMemoryUsage::alternate_compressed_bytes"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, alternate_compressed_bytes) - 96usize];
+    ["Offset of field: TerminalMemoryUsage::alternate_image_bytes"]
+        [::std::mem::offset_of!(TerminalMemoryUsage, alternate_image_bytes) - 104usize];
+};
 #[doc = " Callback function type for bell.\n\n Called when the terminal receives a BEL character (0x07).\n\n"]
 pub type TerminalBellFn = ::std::option::Option<
     unsafe extern "C" fn(terminal: Terminal, userdata: *mut ::std::os::raw::c_void),
@@ -3320,12 +3386,14 @@ pub mod TerminalData {
     pub const CLIPBOARD_WRITE_MAX_BYTES: Type = 40;
     #[doc = " The mouse pointer shape requested by the application through OSC 22.\n\n Initially GHOSTTY_MOUSE_SHAPE_TEXT. Excludes host hover overrides.\n\n Output type: GhosttyMouseShape *"]
     pub const MOUSE_SHAPE: Type = 41;
+    #[doc = " How much memory the terminal holds. See GhosttyTerminalMemoryUsage\n for what each field means.\n\n Set the struct's `size` field before the call, for example with\n GHOSTTY_INIT_SIZED(). If `size` is too small, this returns\n GHOSTTY_INVALID_VALUE and leaves the struct unchanged.\n\n This never decompresses scrollback, but it does look at every page, so\n avoid reading it after every write.\n\n Output type: GhosttyTerminalMemoryUsage *"]
+    pub const MEMORY_USAGE: Type = 42;
     #[doc = " Which part of its prompt the shell redraws after a resize, as the last\n OSC 133;A with a `redraw` option said.\n\n Initially GHOSTTY_TERMINAL_PROMPT_REDRAW_NONE, and again after a full\n reset.\n\n Output type: GhosttyTerminalPromptRedraw *"]
-    pub const PROMPT_REDRAW: Type = 42;
+    pub const PROMPT_REDRAW: Type = 43;
     #[doc = " The semantic content type (OSC 133) the cursor writes cells with:\n output, input or prompt.\n\n Output type: GhosttyCellSemanticContent *"]
-    pub const CURSOR_SEMANTIC_CONTENT: Type = 43;
+    pub const CURSOR_SEMANTIC_CONTENT: Type = 44;
     #[doc = " Whether the cursor's input content ends at the end of the line\n (OSC 133;I), so the next newline returns it to output.\n\n Output type: bool *"]
-    pub const CURSOR_SEMANTIC_CLEAR_EOL: Type = 44;
+    pub const CURSOR_SEMANTIC_CLEAR_EOL: Type = 45;
     #[doc = " Whether the cursor's input content ends at the end of the line\n (OSC 133;I), so the next newline returns it to output.\n\n Output type: bool *"]
     pub const MAX_VALUE: Type = 2147483647;
 }
@@ -5239,7 +5307,9 @@ pub mod SnapshotDecoderOption {
     pub const MAX_CONTINUATION_BYTES: Type = 0;
     #[doc = " Retain the decoded continuation on the returned terminal.\n\n When true, terminals returned by ghostty_snapshot_decoder_ready() and\n ghostty_snapshot_decoder_decode() use\n GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES as their continuation\n tracking limit. The existing ghostty_terminal_continuation_* APIs can then\n export the exact unfinished VT or UTF-8 input restored from the snapshot.\n\n This is false by default. A maximum continuation size of zero leaves\n tracking disabled. With a nonzero maximum, tracking remains enabled even\n when the decoded continuation is empty. Exporting an empty continuation\n does not disable it. Callers that do not need ongoing tracking must still\n set GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to zero after export and\n before writing post-snapshot input.\n\n Input type: bool *"]
     pub const RETAIN_CONTINUATION: Type = 1;
-    #[doc = " Retain the decoded continuation on the returned terminal.\n\n When true, terminals returned by ghostty_snapshot_decoder_ready() and\n ghostty_snapshot_decoder_decode() use\n GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES as their continuation\n tracking limit. The existing ghostty_terminal_continuation_* APIs can then\n export the exact unfinished VT or UTF-8 input restored from the snapshot.\n\n This is false by default. A maximum continuation size of zero leaves\n tracking disabled. With a nonzero maximum, tracking remains enabled even\n when the decoded continuation is empty. Exporting an empty continuation\n does not disable it. Callers that do not need ongoing tracking must still\n set GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to zero after export and\n before writing post-snapshot input.\n\n Input type: bool *"]
+    #[doc = " Compress scrollback history while it is restored.\n\n By default, restoring a snapshot leaves all of its scrollback history\n uncompressed, even if the terminal that produced the snapshot had\n compressed it. The history stays that size until the application calls\n ghostty_terminal_compress(). For a terminal with a lot of scrollback,\n that can be many times more memory than the terminal needed before.\n\n When this option is true, the decoder compresses each history page right\n after restoring it. The restored terminal starts out compressed, and the\n decode never holds more than one uncompressed history page at a time.\n The result is the same as decoding normally and then calling\n ghostty_terminal_compress() with GHOSTTY_TERMINAL_COMPRESSION_MODE_FULL,\n without the memory spike in between.\n\n A history page that is on screen when it is restored stays uncompressed.\n This only happens if the viewport is scrolled to the top of the\n scrollback during an incremental decode. Compressed history is\n uncompressed automatically when it is accessed later, for example by\n scrolling or searching.\n\n This only changes how the restored terminal stores its history in\n memory. The snapshot format is unchanged, so it works with any snapshot.\n On platforms that do not support scrollback compression, this option is\n accepted and has no effect.\n\n This is false by default.\n\n Input type: bool *"]
+    pub const COMPRESS_HISTORY: Type = 2;
+    #[doc = " Compress scrollback history while it is restored.\n\n By default, restoring a snapshot leaves all of its scrollback history\n uncompressed, even if the terminal that produced the snapshot had\n compressed it. The history stays that size until the application calls\n ghostty_terminal_compress(). For a terminal with a lot of scrollback,\n that can be many times more memory than the terminal needed before.\n\n When this option is true, the decoder compresses each history page right\n after restoring it. The restored terminal starts out compressed, and the\n decode never holds more than one uncompressed history page at a time.\n The result is the same as decoding normally and then calling\n ghostty_terminal_compress() with GHOSTTY_TERMINAL_COMPRESSION_MODE_FULL,\n without the memory spike in between.\n\n A history page that is on screen when it is restored stays uncompressed.\n This only happens if the viewport is scrolled to the top of the\n scrollback during an incremental decode. Compressed history is\n uncompressed automatically when it is accessed later, for example by\n scrolling or searching.\n\n This only changes how the restored terminal stores its history in\n memory. The snapshot format is unchanged, so it works with any snapshot.\n On platforms that do not support scrollback compression, this option is\n accepted and has no effect.\n\n This is false by default.\n\n Input type: bool *"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod SnapshotDecoderData {
@@ -5263,7 +5333,9 @@ pub mod SnapshotDecoderData {
     pub const PROGRESS_REMAINING: Type = 7;
     #[doc = " Whether decoded continuation tracking is retained on returned terminals.\n\n This value is available in every non-failed decoder state.\n\n Output type: bool *"]
     pub const RETAIN_CONTINUATION: Type = 8;
-    #[doc = " Whether decoded continuation tracking is retained on returned terminals.\n\n This value is available in every non-failed decoder state.\n\n Output type: bool *"]
+    #[doc = " Whether history is compressed while it is restored.\n\n See GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY. This value is\n available in every non-failed decoder state.\n\n Output type: bool *"]
+    pub const COMPRESS_HISTORY: Type = 9;
+    #[doc = " Whether history is compressed while it is restored.\n\n See GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY. This value is\n available in every non-failed decoder state.\n\n Output type: bool *"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 unsafe extern "C" {
@@ -5325,7 +5397,7 @@ unsafe extern "C" {
     ) -> Result::Type;
 }
 unsafe extern "C" {
-    #[doc = " Decode one history page into the terminal returned by READY.\n\n Each GHOSTTY_SUCCESS consumes and validates one PAGE record. Query the\n GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_* values before calling next again.\n GHOSTTY_NO_VALUE means FINISH was validated; repeated calls after FINISH\n also return GHOSTTY_NO_VALUE.\n\n The terminal may be rendered, resized, and fed live PTY input between calls.\n If a history page can no longer be applied safely, it is still consumed and\n validated and progress reports zero rows. The decoder applies history\n to the caller-owned terminal produced by its READY operation.\n\n A decoding error invalidates the decoder's source position. The terminal\n remains caller-owned and usable with its already-restored history, but only\n ghostty_snapshot_decoder_free() may subsequently be called on the decoder.\n\n         error code on failure\n"]
+    #[doc = " Decode one history page into the terminal returned by READY.\n\n Each GHOSTTY_SUCCESS consumes and validates one PAGE record. Query the\n GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_* values before calling next again.\n GHOSTTY_NO_VALUE means FINISH was validated; repeated calls after FINISH\n also return GHOSTTY_NO_VALUE.\n\n The terminal may be rendered, resized, and fed live PTY input between calls.\n If a history page can no longer be applied safely, it is still consumed and\n validated and progress reports zero rows. The decoder applies history\n to the caller-owned terminal produced by its READY operation.\n\n If GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY is true, the page is\n compressed before this function returns, unless it is visible in the\n terminal's viewport.\n\n A decoding error invalidates the decoder's source position. The terminal\n remains caller-owned and usable with its already-restored history, but only\n ghostty_snapshot_decoder_free() may subsequently be called on the decoder.\n\n         error code on failure\n"]
     pub fn ghostty_snapshot_decoder_next(decoder: SnapshotDecoder) -> Result::Type;
 }
 unsafe extern "C" {

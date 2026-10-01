@@ -353,7 +353,8 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     ///
     /// Changes the number of columns and rows in the terminal. The primary
     /// screen will reflow content if wraparound mode is enabled; the alternate
-    /// screen does not reflow. If the dimensions are unchanged, this is a no-op.
+    /// screen does not reflow. If the dimensions are unchanged, the grid is
+    /// left as is, but everything below still applies.
     ///
     /// This also updates the terminal's pixel dimensions (used for image
     /// protocols and size reports), disables synchronized output mode (allowed
@@ -891,7 +892,9 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     }
     /// The mouse pointer shape requested by the application through OSC 22.
     ///
-    /// Initially [`mouse::Shape::Text`]. Excludes host hover overrides.
+    /// Initially [`mouse::Shape::Text`]. An empty OSC 22 resets it to that,
+    /// and a name libghostty doesn't know leaves it unchanged. Excludes host
+    /// hover overrides.
     pub fn mouse_shape(&self) -> Result<mouse::Shape> {
         self.get::<ffi::MouseShape::Type>(Data::MOUSE_SHAPE)?
             .try_into()
@@ -4361,6 +4364,9 @@ mod tests {
         assert_eq!(terminal.mouse_shape().unwrap(), mouse::Shape::Pointer);
         terminal.vt_write(b"\x1b]22;nwse-resize\x1b\\");
         assert_eq!(terminal.mouse_shape().unwrap(), mouse::Shape::NwseResize);
+        // An empty name gives the pointer back.
+        terminal.vt_write(b"\x1b]22;\x1b\\");
+        assert_eq!(terminal.mouse_shape().unwrap(), mouse::Shape::Text);
     }
 
     fn tiny_terminal() -> Terminal<'static, 'static> {
