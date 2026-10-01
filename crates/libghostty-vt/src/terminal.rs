@@ -10,7 +10,7 @@ use crate::{
     },
     ffi::{self, TerminalData as Data, TerminalOption as Opt},
     key, mouse, osc,
-    screen::{GridRef, Screen, TrackedGridRef},
+    screen::{CellSemanticContent, GridRef, Screen, TrackedGridRef},
     style::{self, Palette, RawPalette, RgbColor},
 };
 
@@ -910,6 +910,17 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
         self.get::<ffi::TerminalPromptRedraw::Type>(Data::PROMPT_REDRAW)?
             .try_into()
             .map_err(|_| Error::InvalidValue)
+    }
+    /// The semantic content (OSC 133) the cursor writes cells with.
+    pub fn cursor_semantic_content(&self) -> Result<CellSemanticContent> {
+        self.get::<ffi::CellSemanticContent::Type>(Data::CURSOR_SEMANTIC_CONTENT)?
+            .try_into()
+            .map_err(|_| Error::InvalidValue)
+    }
+    /// Whether the cursor's input content ends at the end of the line
+    /// (`OSC 133;I`), so the next newline returns it to output.
+    pub fn cursor_semantic_clear_eol(&self) -> Result<bool> {
+        self.get(Data::CURSOR_SEMANTIC_CLEAR_EOL)
     }
     /// Get the current Kitty keyboard protocol flags.
     pub fn kitty_keyboard_flags(&self) -> Result<key::KittyKeyFlags> {
@@ -4322,6 +4333,32 @@ mod tests {
         assert_eq!(terminal.cursor_x().unwrap(), 2);
         drop(terminal);
         assert_eq!(seen.into_inner(), [0], "reset before `xy` was printed");
+    }
+
+    #[test]
+    fn the_cursor_semantic_content_follows_the_shell() {
+        let mut terminal = Terminal::new(80, 24).unwrap();
+        assert_eq!(
+            terminal.cursor_semantic_content().unwrap(),
+            CellSemanticContent::Output
+        );
+        terminal.vt_write(b"\x1b]133;A\x07$ ");
+        assert_eq!(
+            terminal.cursor_semantic_content().unwrap(),
+            CellSemanticContent::Prompt
+        );
+        terminal.vt_write(b"\x1b]133;I\x07ls");
+        assert_eq!(
+            terminal.cursor_semantic_content().unwrap(),
+            CellSemanticContent::Input
+        );
+        assert!(terminal.cursor_semantic_clear_eol().unwrap());
+        terminal.vt_write(b"\r\n");
+        assert_eq!(
+            terminal.cursor_semantic_content().unwrap(),
+            CellSemanticContent::Output
+        );
+        assert!(!terminal.cursor_semantic_clear_eol().unwrap());
     }
 
     #[test]
