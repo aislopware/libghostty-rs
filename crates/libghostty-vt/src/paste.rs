@@ -308,11 +308,9 @@ impl Terminal<'_, '_> {
                 writer,
                 refused: false,
             };
-            // libghostty only fails the paste on a refused write if the
-            // reader reports it, and would otherwise paste whatever was
-            // written, with the refused chunk missing. So report a refused
-            // write even when the reader ignores it.
-            reader(mime, &mut writer).is_ok() && !writer.refused
+            // libghostty fails the paste after any refused write, even if
+            // the reader ignores the error and returns `Ok`.
+            reader(mime, &mut writer).is_ok()
         }
 
         let mut reader = Some(reader);
