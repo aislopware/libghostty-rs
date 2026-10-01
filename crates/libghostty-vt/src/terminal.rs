@@ -3109,6 +3109,22 @@ handlers! {
         func(term);
     }
 
+    /// Call the given function when the running program changes Kitty drag
+    /// and drop protocol (OSC 72) state in a way the embedder may need to
+    /// act on. Installing it enables the protocol; without it OSC 72 is
+    /// ignored entirely. See [`crate::kitty::dnd`] for the flow. Events this
+    /// version of the bindings does not know are not passed on.
+    pub fn on_kitty_dnd(
+        &mut self,
+        tag = KITTY_DND,
+        from = TerminalKittyDndFn(event: ffi::KittyDndEvent::Type),
+        to = KittyDndFn(crate::kitty::dnd::Event),
+    ) |term, func| {
+        if let Some(event) = crate::kitty::dnd::Event::from_raw(event) {
+            func(term, event);
+        }
+    }
+
     /// Call the given function once for each complete sequence that
     /// libghostty-vt does not implement. [`UnknownSequence`] is
     /// non-exhaustive, because more kinds of sequences may be reported in

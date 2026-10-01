@@ -61,6 +61,8 @@ pub const DA_DEVICE_TYPE_VT420: u16 = 41;
 pub const DA_DEVICE_TYPE_VT510: u16 = 61;
 pub const DA_DEVICE_TYPE_VT520: u16 = 64;
 pub const DA_DEVICE_TYPE_VT525: u16 = 65;
+pub const KITTY_DND_OPERATIONS_COPY: u32 = 1;
+pub const KITTY_DND_OPERATIONS_MOVE: u32 = 2;
 pub const MODS_SHIFT: u16 = 1;
 pub const MODS_CTRL: u16 = 2;
 pub const MODS_ALT: u16 = 4;
@@ -2003,6 +2005,428 @@ unsafe extern "C" {
         out_written: *mut usize,
     ) -> Result::Type;
 }
+pub mod KittyDndEvent {
+    #[doc = " A drag and drop state change, delivered through the kitty_dnd effect.\n Details are read with ghostty_kitty_dnd_get() and the other functions\n in this group."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The program registered or unregistered to accept drops."]
+    pub const REGISTRATION: Type = 0;
+    #[doc = " The program answered the drag over the terminal."]
+    pub const ACCEPTANCE: Type = 1;
+    #[doc = " A drop data request needs serving."]
+    pub const DATA_REQUEST: Type = 2;
+    #[doc = " The drop ended with no operation (the program canceled it)."]
+    pub const CONCLUDED_NONE: Type = 3;
+    #[doc = " The drop ended with the program copying the data."]
+    pub const CONCLUDED_COPY: Type = 4;
+    #[doc = " The drop ended with the program moving the data."]
+    pub const CONCLUDED_MOVE: Type = 5;
+    #[doc = " The program enabled or disabled offering drags."]
+    pub const OFFERS: Type = 6;
+    #[doc = " The program asked to start its offered drag."]
+    pub const DRAG_START: Type = 7;
+    #[doc = " The program changed the image of the started drag."]
+    pub const DRAG_IMAGE: Type = 8;
+    #[doc = " Requested drag data arrived or failed."]
+    pub const DRAG_DATA: Type = 9;
+    #[doc = " The native drag in progress must be canceled."]
+    pub const DRAG_CANCEL: Type = 10;
+    #[doc = " The native drag in progress must be canceled."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndOperation {
+    #[doc = " A drag and drop operation."]
+    pub type Type = ::std::os::raw::c_int;
+    pub const NONE: Type = 0;
+    pub const COPY: Type = 1;
+    pub const MOVE: Type = 2;
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndErrno {
+    #[doc = " A POSIX error name used by the protocol."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Success."]
+    pub const OK: Type = 0;
+    #[doc = " Success."]
+    pub const EPERM: Type = 1;
+    #[doc = " Success."]
+    pub const ENOENT: Type = 2;
+    #[doc = " Success."]
+    pub const EIO: Type = 3;
+    #[doc = " Success."]
+    pub const EINVAL: Type = 4;
+    #[doc = " Success."]
+    pub const EMFILE: Type = 5;
+    #[doc = " Success."]
+    pub const ENOMEM: Type = 6;
+    #[doc = " Success."]
+    pub const EFBIG: Type = 7;
+    #[doc = " Success."]
+    pub const EISDIR: Type = 8;
+    #[doc = " Success."]
+    pub const ENOSPC: Type = 9;
+    #[doc = " Success."]
+    pub const EUNKNOWN: Type = 10;
+    #[doc = " Success."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndPhase {
+    #[doc = " The phase of the drag the program offers."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " No drag is offered."]
+    pub const NONE: Type = 0;
+    #[doc = " The program is building an offer."]
+    pub const BUILDING: Type = 1;
+    #[doc = " The program asked to start the drag; report the result."]
+    pub const STARTING: Type = 2;
+    #[doc = " The native drag is in progress."]
+    pub const STARTED: Type = 3;
+    #[doc = " The native drag was dropped; the target may still request data."]
+    pub const DROPPED: Type = 4;
+    #[doc = " The native drag was dropped; the target may still request data."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndImageFormat {
+    #[doc = " The format of a drag image."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " UTF-8 text to render as the image. The width and height are the\n numerator and denominator of the font size scale (0 meaning 1), and\n the opacity is the background's."]
+    pub const TEXT: Type = 0;
+    #[doc = " 24-bit RGB pixels. Expanded to RGBA when the drag starts."]
+    pub const RGB: Type = 24;
+    #[doc = " 32-bit RGBA pixels."]
+    pub const RGBA: Type = 32;
+    #[doc = " A PNG image, to be decoded by the embedder."]
+    pub const PNG: Type = 100;
+    #[doc = " A PNG image, to be decoded by the embedder."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndReport {
+    #[doc = " The kind of a drag progress report."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The drop target accepted the drag. The value is the index of the\n offered MIME type it prefers, or -1 if unknown."]
+    pub const ACCEPTED: Type = 0;
+    #[doc = " The drag's operation changed. The value is a GhosttyKittyDndOperation."]
+    pub const OPERATION: Type = 1;
+    #[doc = " The drag was dropped onto a target. The value is ignored."]
+    pub const DROPPED: Type = 2;
+    #[doc = " The drag finished, which ends it. The value is nonzero if it was\n canceled."]
+    pub const FINISHED: Type = 3;
+    #[doc = " The drag finished, which ends it. The value is nonzero if it was\n canceled."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndDataStatus {
+    #[doc = " The status of drag data received from the program."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " More data may follow."]
+    pub const PENDING: Type = 0;
+    #[doc = " All data has been received."]
+    pub const COMPLETE: Type = 1;
+    #[doc = " The program failed to provide the data."]
+    pub const FAILED: Type = 2;
+    #[doc = " The program failed to provide the data."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndData {
+    #[doc = " Values readable with ghostty_kitty_dnd_get()."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Invalid. Never results in any data."]
+    pub const INVALID: Type = 0;
+    #[doc = " Whether the program is registered to accept drops.\n\n Output type: bool *"]
+    pub const DROP_REGISTERED: Type = 1;
+    #[doc = " The MIME types the program registered with, space-separated and\n usually empty. Only needed to register types with the OS ahead of a\n drag. GHOSTTY_NO_VALUE when not registered.\n\n Output type: GhosttyString *"]
+    pub const DROP_REGISTERED_MIMES: Type = 2;
+    #[doc = " The operation the program accepts for the drag over the terminal.\n GHOSTTY_NO_VALUE until it answered; use your default (typically\n copy) until then.\n\n Output type: GhosttyKittyDndOperation *"]
+    pub const DROP_ACCEPTED: Type = 3;
+    #[doc = " The MIME types the program accepts for the drag over the terminal,\n most preferred first, each followed by a NUL byte. Empty when the\n program didn't say. GHOSTTY_NO_VALUE until it answered.\n\n Output type: GhosttyString *"]
+    pub const DROP_ACCEPTED_MIMES: Type = 4;
+    #[doc = " The drop data request to serve. GHOSTTY_NO_VALUE when there is\n none.\n\n Output type: GhosttyKittyDndDataRequest *"]
+    pub const DROP_REQUEST: Type = 5;
+    #[doc = " Whether the program offers drags.\n\n Output type: bool *"]
+    pub const DRAG_ENABLED: Type = 6;
+    #[doc = " The phase of the drag the program offers.\n\n Output type: GhosttyKittyDndPhase *"]
+    pub const DRAG_PHASE: Type = 7;
+    #[doc = " The operations the offered drag allows, as a bitmask of\n GHOSTTY_KITTY_DND_OPERATIONS_COPY and GHOSTTY_KITTY_DND_OPERATIONS_MOVE.\n GHOSTTY_NO_VALUE when no drag is offered.\n\n Output type: uint32_t *"]
+    pub const DRAG_OPERATIONS: Type = 8;
+    #[doc = " The number of MIME types of the offered drag.\n\n Output type: size_t *"]
+    pub const DRAG_MIME_COUNT: Type = 9;
+    #[doc = " The number of images of the offered drag. Zero once the drag\n started.\n\n Output type: size_t *"]
+    pub const DRAG_IMAGE_COUNT: Type = 10;
+    #[doc = " The index of the image to show for the drag. GHOSTTY_NO_VALUE for\n no image. Once the drag started this is not checked against the\n images, which you copied when it started.\n\n Output type: uint32_t *"]
+    pub const DRAG_CURRENT_IMAGE: Type = 11;
+    #[doc = " The index of the image to show for the drag. GHOSTTY_NO_VALUE for\n no image. Once the drag started this is not checked against the\n images, which you copied when it started.\n\n Output type: uint32_t *"]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+#[doc = " A position on the terminal.\n\n This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct KittyDndPosition {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " Grid cell column, zero-based from the left."]
+    pub cell_x: u32,
+    #[doc = " Grid cell row, zero-based from the top."]
+    pub cell_y: u32,
+    #[doc = " Pixels from the left of the terminal's content area."]
+    pub pixel_x: i32,
+    #[doc = " Pixels from the top of the terminal's content area."]
+    pub pixel_y: i32,
+    #[doc = " The operations a native drag allows, as a bitmask of\n GHOSTTY_KITTY_DND_OPERATIONS_COPY and GHOSTTY_KITTY_DND_OPERATIONS_MOVE.\n Ignored by ghostty_kitty_dnd_drag_gesture()."]
+    pub operations: u32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of KittyDndPosition"][::std::mem::size_of::<KittyDndPosition>() - 32usize];
+    ["Alignment of KittyDndPosition"][::std::mem::align_of::<KittyDndPosition>() - 8usize];
+    ["Offset of field: KittyDndPosition::size"]
+        [::std::mem::offset_of!(KittyDndPosition, size) - 0usize];
+    ["Offset of field: KittyDndPosition::cell_x"]
+        [::std::mem::offset_of!(KittyDndPosition, cell_x) - 8usize];
+    ["Offset of field: KittyDndPosition::cell_y"]
+        [::std::mem::offset_of!(KittyDndPosition, cell_y) - 12usize];
+    ["Offset of field: KittyDndPosition::pixel_x"]
+        [::std::mem::offset_of!(KittyDndPosition, pixel_x) - 16usize];
+    ["Offset of field: KittyDndPosition::pixel_y"]
+        [::std::mem::offset_of!(KittyDndPosition, pixel_y) - 20usize];
+    ["Offset of field: KittyDndPosition::operations"]
+        [::std::mem::offset_of!(KittyDndPosition, operations) - 24usize];
+};
+#[doc = " A drop data request to serve.\n\n This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct KittyDndDataRequest {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " Identifies the request when answering it. Requests are never\n reused, so an answer to a request the program abandoned is\n rejected rather than answering another."]
+    pub id: u32,
+    #[doc = " Zero-based index into the MIME types given to ghostty_kitty_dnd_drop()."]
+    pub mime_index: u32,
+    #[doc = " The MIME type to read from the native drop."]
+    pub mime: String,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of KittyDndDataRequest"][::std::mem::size_of::<KittyDndDataRequest>() - 32usize];
+    ["Alignment of KittyDndDataRequest"][::std::mem::align_of::<KittyDndDataRequest>() - 8usize];
+    ["Offset of field: KittyDndDataRequest::size"]
+        [::std::mem::offset_of!(KittyDndDataRequest, size) - 0usize];
+    ["Offset of field: KittyDndDataRequest::id"]
+        [::std::mem::offset_of!(KittyDndDataRequest, id) - 8usize];
+    ["Offset of field: KittyDndDataRequest::mime_index"]
+        [::std::mem::offset_of!(KittyDndDataRequest, mime_index) - 12usize];
+    ["Offset of field: KittyDndDataRequest::mime"]
+        [::std::mem::offset_of!(KittyDndDataRequest, mime) - 16usize];
+};
+impl Default for KittyDndDataRequest {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " A drag image.\n\n This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct KittyDndImage {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " The image format."]
+    pub format: KittyDndImageFormat::Type,
+    #[doc = " Width in pixels, or the font scale numerator for text."]
+    pub width: u32,
+    #[doc = " Height in pixels, or the font scale denominator for text."]
+    pub height: u32,
+    #[doc = " Background opacity for text, 0 (transparent) to 1024 (opaque)."]
+    pub opacity: u32,
+    #[doc = " The image data."]
+    pub data: *const u8,
+    #[doc = " The length of the image data in bytes."]
+    pub data_len: usize,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of KittyDndImage"][::std::mem::size_of::<KittyDndImage>() - 40usize];
+    ["Alignment of KittyDndImage"][::std::mem::align_of::<KittyDndImage>() - 8usize];
+    ["Offset of field: KittyDndImage::size"][::std::mem::offset_of!(KittyDndImage, size) - 0usize];
+    ["Offset of field: KittyDndImage::format"]
+        [::std::mem::offset_of!(KittyDndImage, format) - 8usize];
+    ["Offset of field: KittyDndImage::width"]
+        [::std::mem::offset_of!(KittyDndImage, width) - 12usize];
+    ["Offset of field: KittyDndImage::height"]
+        [::std::mem::offset_of!(KittyDndImage, height) - 16usize];
+    ["Offset of field: KittyDndImage::opacity"]
+        [::std::mem::offset_of!(KittyDndImage, opacity) - 20usize];
+    ["Offset of field: KittyDndImage::data"][::std::mem::offset_of!(KittyDndImage, data) - 24usize];
+    ["Offset of field: KittyDndImage::data_len"]
+        [::std::mem::offset_of!(KittyDndImage, data_len) - 32usize];
+};
+impl Default for KittyDndImage {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Drag data received from the program.\n\n This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct KittyDndDragData {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " Data received since the last call."]
+    pub data: *const u8,
+    #[doc = " The length of the data in bytes."]
+    pub data_len: usize,
+    #[doc = " Whether more data may follow, all has arrived, or it failed."]
+    pub status: KittyDndDataStatus::Type,
+    #[doc = " The program's error when the status is failed."]
+    pub error: KittyDndErrno::Type,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of KittyDndDragData"][::std::mem::size_of::<KittyDndDragData>() - 32usize];
+    ["Alignment of KittyDndDragData"][::std::mem::align_of::<KittyDndDragData>() - 8usize];
+    ["Offset of field: KittyDndDragData::size"]
+        [::std::mem::offset_of!(KittyDndDragData, size) - 0usize];
+    ["Offset of field: KittyDndDragData::data"]
+        [::std::mem::offset_of!(KittyDndDragData, data) - 8usize];
+    ["Offset of field: KittyDndDragData::data_len"]
+        [::std::mem::offset_of!(KittyDndDragData, data_len) - 16usize];
+    ["Offset of field: KittyDndDragData::status"]
+        [::std::mem::offset_of!(KittyDndDragData, status) - 24usize];
+    ["Offset of field: KittyDndDragData::error"]
+        [::std::mem::offset_of!(KittyDndDragData, error) - 28usize];
+};
+impl Default for KittyDndDragData {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Callback function type for drag and drop state changes.\n\n Called when the running program changes drag and drop state in a way\n the embedder may need to act on. The functions in @ref kitty_dnd may be\n called from within this callback.\n"]
+pub type TerminalKittyDndFn = ::std::option::Option<
+    unsafe extern "C" fn(
+        terminal: Terminal,
+        userdata: *mut ::std::os::raw::c_void,
+        event: KittyDndEvent::Type,
+    ),
+>;
+unsafe extern "C" {
+    #[doc = " Read drag and drop state.\n\n         now, or GHOSTTY_INVALID_VALUE for invalid arguments"]
+    pub fn ghostty_kitty_dnd_get(
+        terminal: Terminal,
+        data: KittyDndData::Type,
+        out: *mut ::std::os::raw::c_void,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report a native drag moving over the terminal.\n\n        discarded an unconcluded previous drop, which you must finish\n        natively with no operation\n         registered to accept drops, GHOSTTY_OUT_OF_MEMORY, or\n         GHOSTTY_INVALID_VALUE for invalid arguments or no write_pty\n         effect"]
+    pub fn ghostty_kitty_dnd_drop_move(
+        terminal: Terminal,
+        position: *const KittyDndPosition,
+        mimes: *const String,
+        mimes_len: usize,
+        out_discarded: *mut bool,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report a native drag leaving the terminal without dropping.\n\n         registered to accept drops, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drop_leave(terminal: Terminal) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report a native drop onto the terminal. Keep the native drop open to\n serve the program's data requests until it concludes the drop.\n"]
+    pub fn ghostty_kitty_dnd_drop(
+        terminal: Terminal,
+        position: *const KittyDndPosition,
+        mimes: *const String,
+        mimes_len: usize,
+        out_discarded: *mut bool,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Send some of the data for the drop data request being served. Data is\n sent as given, so it can be passed on as the native drop delivers it.\n\n         being served, GHOSTTY_NO_VALUE, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drop_respond_data(
+        terminal: Terminal,
+        id: u32,
+        data: *const u8,
+        data_len: usize,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Finish the drop data request being served. The next request, if any,\n is then available with GHOSTTY_KITTY_DND_DATA_DROP_REQUEST.\n"]
+    pub fn ghostty_kitty_dnd_drop_respond_end(terminal: Terminal, id: u32) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Fail the drop data request being served, e.g. because reading it from\n the native drop failed. The next request, if any, is then available\n with GHOSTTY_KITTY_DND_DATA_DROP_REQUEST.\n"]
+    pub fn ghostty_kitty_dnd_drop_respond_error(
+        terminal: Terminal,
+        id: u32,
+        error: KittyDndErrno::Type,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Read a MIME type of the offered drag.\n\n         GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_mime(
+        terminal: Terminal,
+        index: usize,
+        out: *mut String,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Read the data the program pre-sent for a MIME type of the offered\n drag. Only available until the drag starts.\n\n         GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_pre_sent(
+        terminal: Terminal,
+        index: usize,
+        out: *mut String,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Read an image of the offered drag. Only available until the drag\n starts.\n\n         GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_image(
+        terminal: Terminal,
+        index: usize,
+        out: *mut KittyDndImage,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Ask the program to offer a drag, when the user started the platform's\n drag gesture over the terminal.\n\n         drags, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_gesture(
+        terminal: Terminal,
+        position: *const KittyDndPosition,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report the result of starting the native drag the program asked for.\n Copy the offer's pre-sent data and images first: a successful start\n frees them.\n\n        why not (GHOSTTY_KITTY_DND_ERRNO_EPERM when the user already\n        released the drag)\n         GHOSTTY_NO_VALUE, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_start_result(
+        terminal: Terminal,
+        error: KittyDndErrno::Type,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report the progress of the native drag to the program. Ignored unless\n the drag started.\n"]
+    pub fn ghostty_kitty_dnd_drag_report(
+        terminal: Terminal,
+        kind: KittyDndReport::Type,
+        value: i32,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Request the data for a MIME type of the started drag from the\n program, for a drop target that wants it. Sent once until the data is\n complete or failed and taken.\n\n         the index is out of range, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_request_data(terminal: Terminal, index: usize) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Take the data received for a requested MIME type of the started drag.\n\n         the index is out of range, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_take_data(
+        terminal: Terminal,
+        index: usize,
+        out: *mut KittyDndDragData,
+    ) -> Result::Type;
+}
 pub mod KittyGraphicsData {
     #[doc = " Queryable data kinds for ghostty_kitty_graphics_get().\n"]
     pub type Type = ::std::os::raw::c_int;
@@ -3296,7 +3720,9 @@ pub mod TerminalOption {
     pub const SEMANTIC_PROMPT: Type = 42;
     #[doc = " Callback invoked after the running program performs a full reset\n (RIS, ESC c). Set to NULL to ignore resets.\n\n Input type: GhosttyTerminalResetFn"]
     pub const RESET: Type = 43;
-    #[doc = " Callback invoked after the running program performs a full reset\n (RIS, ESC c). Set to NULL to ignore resets.\n\n Input type: GhosttyTerminalResetFn"]
+    #[doc = " Callback invoked when the running program changes Kitty drag and\n drop protocol (OSC 72) state in a way the embedder may need to act\n on. Setting it enables the protocol; while it is NULL, OSC 72 is\n ignored. See @ref kitty_dnd.\n\n Input type: GhosttyTerminalKittyDndFn"]
+    pub const KITTY_DND: Type = 44;
+    #[doc = " Callback invoked when the running program changes Kitty drag and\n drop protocol (OSC 72) state in a way the embedder may need to act\n on. Setting it enables the protocol; while it is NULL, OSC 72 is\n ignored. See @ref kitty_dnd.\n\n Input type: GhosttyTerminalKittyDndFn"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod TerminalData {
