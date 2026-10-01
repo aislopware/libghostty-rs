@@ -931,7 +931,9 @@ pub mod RowData {
     pub const KITTY_VIRTUAL_PLACEHOLDER: Type = 7;
     #[doc = " Whether this row is dirty and requires a redraw.\n\n Output type: bool *"]
     pub const DIRTY: Type = 8;
-    #[doc = " Whether this row is dirty and requires a redraw.\n\n Output type: bool *"]
+    #[doc = " Whether any cells in this row hold only a background colour, with no\n style of their own (may have false positives).\n\n Output type: bool *"]
+    pub const BACKGROUND: Type = 9;
+    #[doc = " Whether any cells in this row hold only a background colour, with no\n style of their own (may have false positives).\n\n Output type: bool *"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 unsafe extern "C" {

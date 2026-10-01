@@ -325,6 +325,12 @@ impl Row {
     pub fn is_dirty(self) -> Result<bool> {
         self.get(ffi::RowData::DIRTY)
     }
+    /// Whether any cells in this row hold only a background colour (may have
+    /// false positives). Such a cell has no style of its own, so
+    /// [`Row::is_styled`] does not say so.
+    pub fn has_background(self) -> Result<bool> {
+        self.get(ffi::RowData::BACKGROUND)
+    }
 }
 
 /// Represents a single terminal cell.
@@ -725,6 +731,23 @@ pub enum CellSemanticContent {
 mod tests {
     use super::*;
     use crate::manifest;
+
+    /// A row an erase under a coloured pen left only a background on says so;
+    /// a row of plain text does not.
+    #[test]
+    fn a_row_holding_only_a_background_says_so() {
+        let mut terminal = Terminal::new(6, 3).expect("terminal");
+        terminal.vt_write(b"plain\r\n\x1b[41m\x1b[K\x1b[0m");
+        let row = |y| {
+            terminal
+                .grid_ref(Point::Active(PointCoordinate { x: 0, y }))
+                .and_then(|r| r.row())
+                .expect("row")
+        };
+        assert!(!row(0).has_background().expect("flag"));
+        assert!(row(1).has_background().expect("flag"));
+        assert!(!row(1).is_styled().expect("flag"), "the colour is no style");
+    }
 
     /// Every cell of a screen holding each kind of content, width, style,
     /// link, protection and semantic content decodes to what the C getters
