@@ -3320,7 +3320,11 @@ pub mod TerminalData {
     pub const MOUSE_SHAPE: Type = 41;
     #[doc = " Which part of its prompt the shell redraws after a resize, as the last\n OSC 133;A with a `redraw` option said.\n\n Initially GHOSTTY_TERMINAL_PROMPT_REDRAW_NONE, and again after a full\n reset.\n\n Output type: GhosttyTerminalPromptRedraw *"]
     pub const PROMPT_REDRAW: Type = 42;
-    #[doc = " Which part of its prompt the shell redraws after a resize, as the last\n OSC 133;A with a `redraw` option said.\n\n Initially GHOSTTY_TERMINAL_PROMPT_REDRAW_NONE, and again after a full\n reset.\n\n Output type: GhosttyTerminalPromptRedraw *"]
+    #[doc = " The semantic content type (OSC 133) the cursor writes cells with:\n output, input or prompt.\n\n Output type: GhosttyCellSemanticContent *"]
+    pub const CURSOR_SEMANTIC_CONTENT: Type = 43;
+    #[doc = " Whether the cursor's input content ends at the end of the line\n (OSC 133;I), so the next newline returns it to output.\n\n Output type: bool *"]
+    pub const CURSOR_SEMANTIC_CLEAR_EOL: Type = 44;
+    #[doc = " Whether the cursor's input content ends at the end of the line\n (OSC 133;I), so the next newline returns it to output.\n\n Output type: bool *"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 unsafe extern "C" {
@@ -3552,11 +3556,13 @@ pub struct FormatterTerminalOptions {
     pub extra: FormatterTerminalExtra,
     #[doc = " Optional selection to restrict output to a range.\n  If NULL, the entire screen is formatted."]
     pub selection: *const Selection,
+    #[doc = " For VT, emit every row's prompt flag and every cell's semantic\n  content (OSC 133), so a replay into a fresh terminal restores them.\n  Rows with no text but a prompt flag are emitted too. No effect when\n  unwrap is set."]
+    pub semantic_prompt: bool,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of FormatterTerminalOptions"]
-        [::std::mem::size_of::<FormatterTerminalOptions>() - 56usize];
+        [::std::mem::size_of::<FormatterTerminalOptions>() - 64usize];
     ["Alignment of FormatterTerminalOptions"]
         [::std::mem::align_of::<FormatterTerminalOptions>() - 8usize];
     ["Offset of field: FormatterTerminalOptions::size"]
@@ -3571,6 +3577,8 @@ const _: () = {
         [::std::mem::offset_of!(FormatterTerminalOptions, extra) - 16usize];
     ["Offset of field: FormatterTerminalOptions::selection"]
         [::std::mem::offset_of!(FormatterTerminalOptions, selection) - 48usize];
+    ["Offset of field: FormatterTerminalOptions::semantic_prompt"]
+        [::std::mem::offset_of!(FormatterTerminalOptions, semantic_prompt) - 56usize];
 };
 impl Default for FormatterTerminalOptions {
     fn default() -> Self {
