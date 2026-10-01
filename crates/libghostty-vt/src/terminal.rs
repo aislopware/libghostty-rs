@@ -591,6 +591,46 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
         Ok(CompressionActivity(value))
     }
 
+    /// How much memory the terminal's screens hold.
+    ///
+    /// Most of it is the pages that store the screen and its scrollback,
+    /// colours, styles and hyperlinks included; images have their own
+    /// figure. Small structures outside the pages, such as the title, are not
+    /// counted. Budget against [`ScreenMemory::resident_bytes`].
+    ///
+    /// This never decompresses scrollback, but it looks at every page, so
+    /// avoid reading it after every write.
+    pub fn memory_usage(&self) -> Result<MemoryUsage> {
+        let mut value = ffi::sized!(ffi::TerminalMemoryUsage);
+        let result = unsafe {
+            ffi::ghostty_terminal_get(
+                self.inner.as_raw(),
+                Data::MEMORY_USAGE,
+                (&raw mut value).cast(),
+            )
+        };
+        from_result(result)?;
+        Ok(MemoryUsage {
+            compression_supported: value.compression_supported,
+            primary: ScreenMemory {
+                pages: value.primary_pages,
+                virtual_bytes: value.primary_virtual_bytes,
+                resident_bytes: value.primary_resident_bytes,
+                compressed_pages: value.primary_compressed_pages,
+                compressed_bytes: value.primary_compressed_bytes,
+                image_bytes: value.primary_image_bytes,
+            },
+            alternate: ScreenMemory {
+                pages: value.alternate_pages,
+                virtual_bytes: value.alternate_virtual_bytes,
+                resident_bytes: value.alternate_resident_bytes,
+                compressed_pages: value.alternate_compressed_pages,
+                compressed_bytes: value.alternate_compressed_bytes,
+                image_bytes: value.alternate_image_bytes,
+            },
+        })
+    }
+
     /// The configured maximum retained VT continuation size in bytes.
     ///
     /// A value of zero means continuation tracking is disabled. This reports
@@ -1696,6 +1736,48 @@ pub enum CompressionResult {
     Pending = ffi::TerminalCompressionResult::PENDING,
     /// The pass has no continuation to schedule.
     Complete = ffi::TerminalCompressionResult::COMPLETE,
+}
+
+/// Memory held by a terminal, from [`Terminal::memory_usage`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryUsage {
+    /// Whether compressing scrollback can free memory on this platform. When
+    /// false, [`Terminal::compress`] reports [`CompressionResult::Unsupported`]
+    /// and the compressed figures are always zero.
+    pub compression_supported: bool,
+    /// The primary screen, which holds all of the scrollback.
+    pub primary: ScreenMemory,
+    /// The alternate screen: all zero until a program first switches to it.
+    pub alternate: ScreenMemory,
+}
+
+impl MemoryUsage {
+    /// Physical memory both screens' pages use, the figure to budget against.
+    #[must_use]
+    pub const fn resident_bytes(&self) -> u64 {
+        self.primary.resident_bytes.saturating_add(self.alternate.resident_bytes)
+    }
+}
+
+/// Memory held by one screen's pages.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScreenMemory {
+    /// Pages, compressed ones included.
+    pub pages: u64,
+    /// Address space reserved for the pages, compressed and spare ones
+    /// included. Always at least [`resident_bytes`](Self::resident_bytes).
+    pub virtual_bytes: u64,
+    /// Physical memory the pages use; a compressed page counts only its
+    /// compressed size.
+    pub resident_bytes: u64,
+    /// Pages that are compressed.
+    pub compressed_pages: u64,
+    /// Compressed data held for them, already part of
+    /// [`resident_bytes`](Self::resident_bytes).
+    pub compressed_bytes: u64,
+    /// Image data stored through the Kitty graphics protocol, not part of
+    /// [`resident_bytes`](Self::resident_bytes).
+    pub image_bytes: u64,
 }
 
 /// Opaque token representing a terminal's current compression activity.
@@ -4367,6 +4449,39 @@ mod tests {
         // An empty name gives the pointer back.
         terminal.vt_write(b"\x1b]22;\x1b\\");
         assert_eq!(terminal.mouse_shape().unwrap(), mouse::Shape::Text);
+    }
+
+    #[test]
+    fn memory_usage_grows_with_scrollback_and_compression_lowers_it() {
+        let mut terminal = Terminal::new(80, 24).unwrap();
+        let fresh = terminal.memory_usage().unwrap();
+        assert!(fresh.primary.pages >= 1);
+        assert!(fresh.primary.resident_bytes > 0);
+        assert!(fresh.primary.resident_bytes <= fresh.primary.virtual_bytes);
+        assert_eq!(fresh.alternate, ScreenMemory::default());
+
+        for i in 0..20_000 {
+            terminal.vt_write(format!("line {i} of plain output\r\n").as_bytes());
+        }
+        let full = terminal.memory_usage().unwrap();
+        assert!(full.primary.pages > fresh.primary.pages);
+        assert!(full.primary.resident_bytes > fresh.primary.resident_bytes);
+        assert_eq!(full.resident_bytes(), full.primary.resident_bytes);
+
+        let result = terminal.compress(CompressionMode::Full).unwrap();
+        let compressed = terminal.memory_usage().unwrap();
+        if full.compression_supported {
+            assert_eq!(result, CompressionResult::Complete);
+            assert!(compressed.primary.compressed_pages > 0);
+            assert!(compressed.primary.compressed_bytes > 0);
+            assert!(compressed.primary.resident_bytes < full.primary.resident_bytes);
+        } else {
+            assert_eq!(result, CompressionResult::Unsupported);
+            assert_eq!(compressed.primary.compressed_pages, 0);
+        }
+
+        terminal.vt_write(b"\x1b[?1049h");
+        assert!(terminal.memory_usage().unwrap().alternate.pages >= 1);
     }
 
     fn tiny_terminal() -> Terminal<'static, 'static> {
