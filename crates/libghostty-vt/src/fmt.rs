@@ -47,7 +47,9 @@ impl<'t, 's> FormatterOptions<'t, 's> {
         self.inner.emit = value.into();
         self
     }
-    /// Specify whether to unwrap soft-wrapped lines.
+    /// Specify whether to unwrap soft-wrapped lines. VT output then leaves
+    /// a soft-wrapped row for a replaying terminal of the same width to
+    /// wrap itself.
     pub fn with_unwrap(mut self, value: bool) -> Self {
         self.inner.unwrap = value;
         self
@@ -60,9 +62,15 @@ impl<'t, 's> FormatterOptions<'t, 's> {
     /// Specify whether VT output carries every row's prompt flag and every
     /// cell's semantic content (OSC 133), so a replay into a fresh terminal
     /// restores them. Rows with no text but a prompt flag are emitted too.
-    /// No effect with [`with_unwrap`](Self::with_unwrap).
     pub fn with_semantic_prompt(mut self, value: bool) -> Self {
         self.inner.semantic_prompt = value;
+        self
+    }
+    /// Specify whether VT output ends with the blank rows after the last
+    /// one with text, so a replay into a fresh terminal of the same size
+    /// has every row: a screen with history keeps it whole.
+    pub fn with_trailing_rows(mut self, value: bool) -> Self {
+        self.inner.trailing_rows = value;
         self
     }
     /// Specify the selection to restrict output to a range.
@@ -388,6 +396,20 @@ mod tests {
         let has = |bytes: &[u8]| bytes.windows(4).any(|w| w == b"133;");
         assert!(has(&with), "{}", String::from_utf8_lossy(&with));
         assert!(!has(&vt(false)), "only when asked");
+    }
+
+    #[test]
+    fn vt_output_ends_with_the_trailing_rows_when_asked() {
+        let mut terminal = Terminal::new(10, 4).unwrap();
+        terminal.vt_write(b"top\r\n\r\n");
+        let vt = |trailing| {
+            let options = FormatterOptions::new()
+                .with_format(Format::Vt)
+                .with_trailing_rows(trailing);
+            format_buf(&mut Formatter::new(&terminal, options).unwrap())
+        };
+        assert!(vt(true).ends_with(b"top\r\n\r\n\r\n"), "every row but the last ends");
+        assert_eq!(vt(false), b"top", "left out unless asked");
     }
 
     #[test]

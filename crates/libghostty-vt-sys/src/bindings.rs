@@ -3556,8 +3556,10 @@ pub struct FormatterTerminalOptions {
     pub extra: FormatterTerminalExtra,
     #[doc = " Optional selection to restrict output to a range.\n  If NULL, the entire screen is formatted."]
     pub selection: *const Selection,
-    #[doc = " For VT, emit every row's prompt flag and every cell's semantic\n  content (OSC 133), so a replay into a fresh terminal restores them.\n  Rows with no text but a prompt flag are emitted too. No effect when\n  unwrap is set."]
+    #[doc = " For VT, emit every row's prompt flag and every cell's semantic\n  content (OSC 133), so a replay into a fresh terminal restores them.\n  Rows with no text but a prompt flag are emitted too."]
     pub semantic_prompt: bool,
+    #[doc = " For VT, end with the blank rows after the last one with text, as\n  newlines, so a replay into a fresh terminal of the same size has\n  every row that was formatted."]
+    pub trailing_rows: bool,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
@@ -3579,6 +3581,8 @@ const _: () = {
         [::std::mem::offset_of!(FormatterTerminalOptions, selection) - 48usize];
     ["Offset of field: FormatterTerminalOptions::semantic_prompt"]
         [::std::mem::offset_of!(FormatterTerminalOptions, semantic_prompt) - 56usize];
+    ["Offset of field: FormatterTerminalOptions::trailing_rows"]
+        [::std::mem::offset_of!(FormatterTerminalOptions, trailing_rows) - 57usize];
 };
 impl Default for FormatterTerminalOptions {
     fn default() -> Self {
