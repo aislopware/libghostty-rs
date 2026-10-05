@@ -95,6 +95,10 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DEBUG");
     println!("cargo:rerun-if-env-changed=OPT_LEVEL");
     println!("cargo:rerun-if-env-changed=DOCS_RS");
+    println!("cargo:rerun-if-env-changed=LIBGHOSTTY_VT_SYS_PREBUILT_DIR");
+    for name in PREBUILT_KEY_ENV {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
     // Relative to the package root. The fetched source is pinned by
     // GHOSTTY_COMMIT in this file, so this line also covers a new pin.
     println!("cargo:rerun-if-changed=build.rs");
@@ -243,12 +247,23 @@ fn build_vendored(link_mode: LinkMode, target: &str) {
         build.arg(format!("-Dtarget={zig_target}"));
     }
 
-    run(build, "zig build");
+    let prebuilt = Prebuilt::new(&ghostty_dir, target, &host, optimize, &cpu, link_mode);
+    if prebuilt
+        .as_ref()
+        .is_some_and(|p| p.restore(&install_prefix))
+    {
+        println!("cargo:warning=libghostty-vt: reused the library built for these inputs");
+    } else {
+        run(build, "zig build");
 
-    // The emit also installs host-native flat artifacts; replace them with the
-    // iOS library so the link emission below picks up the right arch.
-    if let Some(platform) = ios_platform {
-        extract_xcframework_lib(&install_prefix, platform);
+        // The emit also installs host-native flat artifacts; replace them with the
+        // iOS library so the link emission below picks up the right arch.
+        if let Some(platform) = ios_platform {
+            extract_xcframework_lib(&install_prefix, platform);
+        }
+        if let Some(prebuilt) = &prebuilt {
+            prebuilt.publish(&install_prefix);
+        }
     }
 
     let lib_dir = install_prefix.join("lib");
@@ -293,6 +308,208 @@ fn build_vendored(link_mode: LinkMode, target: &str) {
         LinkMode::Static => emit_static_link_lib(target),
     }
     emit_include_metadata(&[include_dir]);
+}
+
+/// Environment variables the zig build reads besides the ones `main` already
+/// watches: the Apple SDK and deployment targets it compiles against.
+const PREBUILT_KEY_ENV: [&str; 4] = [
+    "SDKROOT",
+    "MACOSX_DEPLOYMENT_TARGET",
+    "IPHONEOS_DEPLOYMENT_TARGET",
+    "GHOSTTY_ZIG_SYSTEM_DIR",
+];
+
+/// The file in a prebuilt entry that holds the whole key it was built for.
+const PREBUILT_KEY_FILE: &str = ".libghostty-vt-sys-key";
+
+/// A library built once for an exact set of inputs and reused by every build
+/// that asks for the same set, opted into with `LIBGHOSTTY_VT_SYS_PREBUILT_DIR`.
+///
+/// Each Cargo target dir, profile and triple otherwise runs its own zig build
+/// of the same source: a minute or two each, the head of a CI job's critical
+/// path, and again for every fresh target dir. The key is every input the
+/// build reads: the source's commit, the zig version, the target and host,
+/// the optimize mode, the CPU model, the link mode, the Apple SDKs, the
+/// environment in [`PREBUILT_KEY_ENV`], and this script itself. A source with
+/// uncommitted edits to tracked files has no commit that describes it and is
+/// always built. An entry holds its whole key and is used only when the key
+/// matches; it is published by a rename, so concurrent builds never see half
+/// of one. Its key file's mtime is when it was last built or used.
+struct Prebuilt {
+    entry: PathBuf,
+    key: String,
+}
+
+impl Prebuilt {
+    fn new(
+        source: &Path,
+        target: &str,
+        host: &str,
+        optimize: &str,
+        cpu: &str,
+        link_mode: LinkMode,
+    ) -> Option<Self> {
+        let dir = PathBuf::from(env::var_os("LIBGHOSTTY_VT_SYS_PREBUILT_DIR")?);
+        let Some(revision) = source_revision(source) else {
+            println!(
+                "cargo:warning=libghostty-vt: {} has uncommitted edits, so it is built and not shared",
+                source.display()
+            );
+            return None;
+        };
+        let mut key = String::new();
+        let mut field = |name: &str, value: &str| {
+            key.push_str(name);
+            key.push('=');
+            key.push_str(value);
+            key.push('\n');
+        };
+        field("source", &revision);
+        field("zig", &command_output("zig", &["version"])?);
+        field("target", target);
+        field("host", host);
+        field("optimize", optimize);
+        field("cpu", cpu);
+        field("link", link_mode.artifact_kind());
+        if target.contains("apple") || host.contains("apple") {
+            for sdk in ["macosx", "iphoneos", "iphonesimulator"] {
+                let version = command_output("xcrun", &["--sdk", sdk, "--show-sdk-build-version"])
+                    .unwrap_or_default();
+                field(sdk, &version);
+            }
+        }
+        for name in PREBUILT_KEY_ENV {
+            field(name, &env::var(name).unwrap_or_default());
+        }
+        let script = Path::new(&env::var("CARGO_MANIFEST_DIR").ok()?).join("build.rs");
+        field(
+            "build.rs",
+            &format!("{:016x}", hash(&std::fs::read(script).ok()?)),
+        );
+        field("crate", env!("CARGO_PKG_VERSION"));
+        let name = format!("{target}-{optimize}-{:016x}", hash(key.as_bytes()));
+        Some(Self {
+            entry: dir.join(name),
+            key,
+        })
+    }
+
+    /// Fill `install_prefix` from the entry, if it holds a library built for
+    /// exactly this key.
+    fn restore(&self, install_prefix: &Path) -> bool {
+        let stored = std::fs::read_to_string(self.entry.join(PREBUILT_KEY_FILE));
+        if stored.ok().as_deref() != Some(self.key.as_str()) {
+            return false;
+        }
+        if install_prefix.exists() {
+            std::fs::remove_dir_all(install_prefix).unwrap_or_else(|error| {
+                panic!("failed to remove {}: {error}", install_prefix.display())
+            });
+        }
+        copy_dir_all(&self.entry, install_prefix);
+        // When it was last used, which is what a cleaner of the directory
+        // reads; a failure to stamp it costs nothing now.
+        let _ = std::fs::File::options()
+            .append(true)
+            .open(self.entry.join(PREBUILT_KEY_FILE))
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()));
+        true
+    }
+
+    /// Share what the build installed, less the XCFramework the iOS slice was
+    /// taken from. A failure here costs the next build its reuse, not this
+    /// build its library, so it is only reported.
+    fn publish(&self, install_prefix: &Path) {
+        let Some(parent) = self.entry.parent() else {
+            return;
+        };
+        let staging = parent.join(format!(
+            ".{}.tmp-{}",
+            self.entry.file_name().unwrap_or_default().to_string_lossy(),
+            std::process::id()
+        ));
+        let published = std::fs::create_dir_all(parent)
+            .and_then(|()| copy_installed(install_prefix, &staging))
+            .and_then(|()| std::fs::write(staging.join(PREBUILT_KEY_FILE), &self.key))
+            .and_then(|()| {
+                // An entry under this name for another key (a damaged one, or
+                // a hash collision) would otherwise refuse every publish.
+                let stored = std::fs::read_to_string(self.entry.join(PREBUILT_KEY_FILE));
+                if self.entry.exists() && stored.ok().as_deref() != Some(self.key.as_str()) {
+                    std::fs::remove_dir_all(&self.entry)?;
+                }
+                std::fs::rename(&staging, &self.entry)
+            });
+        if published.is_err() {
+            // Another build published the same key first, or the directory
+            // is not writable; either way this build's library stands.
+            let _ = std::fs::remove_dir_all(&staging);
+        }
+    }
+}
+
+/// The commit a source tree is at, when no tracked file differs from it.
+/// Untracked files are left out: the zig package cache sits inside a vendored
+/// checkout, and a new file the build reads needs a tracked edit to be read.
+fn source_revision(source: &Path) -> Option<String> {
+    if env::var_os("GHOSTTY_SOURCE_DIR").is_none() {
+        return Some(GHOSTTY_COMMIT.to_owned());
+    }
+    let dirty = command_output(
+        "git",
+        &[
+            "-C",
+            &source.to_string_lossy(),
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+        ],
+    )?;
+    if !dirty.is_empty() {
+        return None;
+    }
+    command_output(
+        "git",
+        &["-C", &source.to_string_lossy(), "rev-parse", "HEAD"],
+    )
+}
+
+/// A command's trimmed standard output, when it ran and succeeded.
+fn command_output(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// FNV-1a: stable across Rust releases, which `DefaultHasher` does not promise.
+/// The entry stores its whole key, so a collision is a miss, never a wrong
+/// library.
+fn hash(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// [`copy_dir_all`] for publishing, without the XCFramework and with errors
+/// returned rather than raised.
+fn copy_installed(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        if entry.file_name() == "ghostty-vt.xcframework" {
+            continue;
+        }
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_installed(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
 }
 
 /// Emit the link directive for the static archive.
