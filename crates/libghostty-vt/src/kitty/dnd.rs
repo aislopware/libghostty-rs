@@ -211,7 +211,10 @@ impl Terminal<'_, '_> {
     }
 
     fn dnd_string(&self, data: ffi::KittyDndData::Type) -> Result<Option<&[u8]>> {
-        let mut value = ffi::String { ptr: std::ptr::null(), len: 0 };
+        let mut value = ffi::String {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
         // SAFETY: a string output, as documented for `data`.
         let result = unsafe {
             ffi::ghostty_kitty_dnd_get(self.inner.as_raw(), data, (&raw mut value).cast())
@@ -225,7 +228,9 @@ impl Terminal<'_, '_> {
     /// Whether the program is registered to accept drops: while it is,
     /// native drags over the terminal go to [`Self::dnd_drop_move`].
     pub fn dnd_drop_registered(&self) -> Result<bool> {
-        Ok(self.dnd_get::<bool>(ffi::KittyDndData::DROP_REGISTERED)?.unwrap_or(false))
+        Ok(self
+            .dnd_get::<bool>(ffi::KittyDndData::DROP_REGISTERED)?
+            .unwrap_or(false))
     }
 
     /// The MIME types the program registered with, space-separated and

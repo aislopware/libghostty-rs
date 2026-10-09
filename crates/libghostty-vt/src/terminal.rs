@@ -1759,7 +1759,9 @@ impl MemoryUsage {
     /// Physical memory both screens' pages use, the figure to budget against.
     #[must_use]
     pub const fn resident_bytes(&self) -> u64 {
-        self.primary.resident_bytes.saturating_add(self.alternate.resident_bytes)
+        self.primary
+            .resident_bytes
+            .saturating_add(self.alternate.resident_bytes)
     }
 }
 
@@ -2059,7 +2061,6 @@ impl<'t> ClipboardRead<'t> {
     ///
     /// The values come straight from the program, so they are exposed as
     /// raw bytes.
-    #[must_use]
     pub fn mimes(&self) -> impl ExactSizeIterator<Item = &'t [u8]> + use<'t> {
         // SAFETY: The request lives for the callback duration.
         let (ptr, len) = unsafe {
@@ -3556,7 +3557,7 @@ mod tests {
         // Exceeding the limit fails the transaction and never reaches the callback.
         let (output, written) = run(4);
         assert_eq!(output, b"\x1b]5522;type=write:status=EFBIG:id=c1\x1b\\");
-        assert!(written.is_empty());
+        assert_eq!(written, Vec::<Vec<u8>>::new());
 
         let (output, written) = run(5);
         assert_eq!(output, b"\x1b]5522;type=write:status=DONE:id=c1\x1b\\");
@@ -3601,9 +3602,9 @@ mod tests {
         let apc = b"\x1b_unknown\x1b\\";
         // Installing the callback alone captures nothing: the default limit
         // is zero.
-        assert!(unknown_apcs(None, apc).is_empty());
+        assert_eq!(unknown_apcs(None, apc), Vec::<(Vec<u8>, bool)>::new());
         // Neither does an explicit zero limit.
-        assert!(unknown_apcs(Some(0), apc).is_empty());
+        assert_eq!(unknown_apcs(Some(0), apc), Vec::<(Vec<u8>, bool)>::new());
         // Content under the limit arrives whole, without the introducer and
         // terminator.
         assert_eq!(unknown_apcs(Some(64), apc), [(b"unknown".to_vec(), false)]);
@@ -3681,8 +3682,14 @@ mod tests {
         );
         // Nothing is reported for an OSC number libghostty-vt implements, or
         // for a sequence the program cancelled with CAN.
-        assert!(unknown_oscs(64, b"\x1b]2;title\x07").is_empty());
-        assert!(unknown_oscs(64, b"\x1b]7400;status=busy\x18").is_empty());
+        assert_eq!(
+            unknown_oscs(64, b"\x1b]2;title\x07"),
+            Vec::<(Vec<u8>, bool, osc::Terminator)>::new()
+        );
+        assert_eq!(
+            unknown_oscs(64, b"\x1b]7400;status=busy\x18"),
+            Vec::<(Vec<u8>, bool, osc::Terminator)>::new()
+        );
     }
 
     #[test]
@@ -3719,12 +3726,21 @@ mod tests {
     #[test]
     fn only_unsupported_sequences_are_reported() {
         // An aborted sequence (CAN) is ignored.
-        assert!(unknown_apcs(Some(64), b"\x1b_unknown\x18").is_empty());
+        assert_eq!(
+            unknown_apcs(Some(64), b"\x1b_unknown\x18"),
+            Vec::<(Vec<u8>, bool)>::new()
+        );
         // Any APC starting with `G` belongs to Kitty graphics, so even a
         // garbage command never reaches unknown capture.
-        assert!(unknown_apcs(Some(64), b"\x1b_Gabcdef1234\x1b\\").is_empty());
+        assert_eq!(
+            unknown_apcs(Some(64), b"\x1b_Gabcdef1234\x1b\\"),
+            Vec::<(Vec<u8>, bool)>::new()
+        );
         // An incomplete known protocol identifier is malformed, not unknown.
-        assert!(unknown_apcs(Some(64), b"\x1b_25a\x1b\\").is_empty());
+        assert_eq!(
+            unknown_apcs(Some(64), b"\x1b_25a\x1b\\"),
+            Vec::<(Vec<u8>, bool)>::new()
+        );
 
         // An explicitly disabled known protocol is ignored as well.
         let seen = RefCell::new(Vec::new());
@@ -4717,7 +4733,7 @@ mod tests {
         let write = unsafe { ClipboardWrite::from_raw(&raw const raw) };
         assert_eq!(write.location(), ClipboardLocation::Primary);
         assert_eq!(write.contents().next().unwrap().data, b"hi");
-        assert!(write.name().is_empty());
+        assert_eq!(write.name(), b"");
         assert!(!write.granted());
         assert!(!write.can_remember());
         write.reply(Ok(()), false);
@@ -4749,7 +4765,7 @@ mod tests {
         let read = unsafe { ClipboardRead::from_raw(&raw const raw) };
         assert_eq!(read.location(), ClipboardLocation::Selection);
         assert_eq!(read.mimes().collect::<Vec<_>>(), [b"text/plain"]);
-        assert!(read.name().is_empty());
+        assert_eq!(read.name(), b"");
         assert!(!read.granted());
         assert!(!read.can_remember());
         read.reply(Ok(&[]), &[], false);

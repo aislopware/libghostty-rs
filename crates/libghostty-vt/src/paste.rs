@@ -472,7 +472,7 @@ mod tests {
         // Without a pty write callback there is nowhere to paste to.
         let (result, reads) = paste(&mut terminal, &output, Options::new(), &TEXT, b"hi");
         assert!(matches!(result, Err(Error::InvalidValue)));
-        assert!(reads.is_empty());
+        assert_eq!(reads, Vec::<String>::new());
 
         terminal
             .on_pty_write(|_term, bytes| output.borrow_mut().extend_from_slice(bytes))
@@ -481,11 +481,11 @@ mod tests {
         // No MIME types, or only non-text ones, is nothing to paste.
         let (result, reads) = paste(&mut terminal, &output, Options::new(), &[], b"");
         assert!(!result.unwrap());
-        assert!(reads.is_empty());
+        assert_eq!(reads, Vec::<String>::new());
         let png = [ClipboardMime::new("image/png")];
         let (result, reads) = paste(&mut terminal, &output, Options::new(), &png, b"png");
         assert!(!result.unwrap());
-        assert!(reads.is_empty());
+        assert_eq!(reads, Vec::<String>::new());
         // An empty text representation is nothing to paste either.
         let (result, _) = paste(&mut terminal, &output, Options::new(), &TEXT, b"");
         assert!(!result.unwrap());
@@ -606,7 +606,7 @@ mod tests {
         // would be unsafe unbracketed is not rejected, and is not even read.
         let (result, reads) = paste(&mut terminal, &output, Options::new(), &TEXT, b"a\n");
         assert!(result.unwrap());
-        assert!(reads.is_empty());
+        assert_eq!(reads, Vec::<String>::new());
         assert!(
             output
                 .borrow()
