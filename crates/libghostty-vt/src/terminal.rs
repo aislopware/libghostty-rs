@@ -2390,6 +2390,133 @@ pub enum ProgressState {
     Pause = ffi::TerminalProgressState::PAUSE,
 }
 
+/// A program status report (OSC 7501), passed to
+/// [`Terminal::on_program_status`]: what the running program says it is
+/// doing, such as working or waiting on the user, for one of its records.
+///
+/// The terminal keeps no records; each report replaces the whole record for
+/// its [`id`](Self::id), and the embedder keeps them under the rules on
+/// [`Terminal::on_program_status`]. It borrows the terminal's memory for the
+/// duration of the callback, so copy what you need to keep.
+///
+/// The specification is at
+/// <https://www.superlogical.com/rex/docs/build/program-status>.
+#[derive(Debug, Copy, Clone)]
+pub struct ProgramStatus<'t> {
+    ptr: *const ffi::TerminalProgramStatus,
+    _phan: PhantomData<&'t ()>,
+}
+
+impl<'t> ProgramStatus<'t> {
+    unsafe fn from_raw(raw: *const ffi::TerminalProgramStatus) -> Self {
+        Self {
+            ptr: raw,
+            _phan: PhantomData,
+        }
+    }
+
+    fn raw(self) -> &'t ffi::TerminalProgramStatus {
+        // SAFETY: libghostty passes a valid report that is borrowed for the
+        // callback duration, which `'t` stands for. Every field has been in
+        // the sized struct since it was introduced.
+        unsafe { &*self.ptr }
+    }
+
+    /// What the program is doing, or [`ProgramState::Clear`] to remove the
+    /// record and every record beneath it. A state added to libghostty
+    /// later is an [`Error::InvalidValue`], so ignore what you can't read.
+    pub fn state(self) -> Result<ProgramState> {
+        self.raw().state.try_into().map_err(|_| Error::InvalidValue)
+    }
+
+    /// What a [`ProgramState::Blocked`] program needs from the user.
+    /// [`ProgramNeed::Unsaid`] for other states, when the program didn't
+    /// say, or for a kind this version doesn't know.
+    #[must_use]
+    pub fn need(self) -> ProgramNeed {
+        self.raw().kind.try_into().unwrap_or(ProgramNeed::Unsaid)
+    }
+
+    /// How far along the work is, from 0 through 100, for
+    /// [`ProgramState::Working`] and [`ProgramState::Blocked`]; `None` when
+    /// the program didn't say.
+    #[must_use]
+    pub fn progress(self) -> Option<u8> {
+        u8::try_from(self.raw().progress).ok()
+    }
+
+    /// Which record the report is about, a `/` path such as `build/test`
+    /// (a child of `build`). Empty for the root record, the program itself.
+    #[must_use]
+    pub fn id(self) -> &'t [u8] {
+        // SAFETY: The string is borrowed for the callback duration.
+        unsafe { self.raw().id.to_bytes() }
+    }
+
+    /// A stable name for the program a machine can match on, such as
+    /// `cargo`. Empty when the program didn't say.
+    #[must_use]
+    pub fn app(self) -> &'t [u8] {
+        // SAFETY: The string is borrowed for the callback duration.
+        unsafe { self.raw().app.to_bytes() }
+    }
+
+    /// A short label for the record, meant for people. Decoded, with no
+    /// control characters, but still the program's untrusted text: strip
+    /// invisible formatting such as direction overrides before showing it
+    /// outside the terminal.
+    #[must_use]
+    pub fn title(self) -> &'t [u8] {
+        // SAFETY: The string is borrowed for the callback duration.
+        unsafe { self.raw().title.to_bytes() }
+    }
+
+    /// One line saying what the record is doing, waiting for or has
+    /// finished. Untrusted, as [`Self::title`] is.
+    #[must_use]
+    pub fn message(self) -> &'t [u8] {
+        // SAFETY: The string is borrowed for the callback duration.
+        unsafe { self.raw().message.to_bytes() }
+    }
+}
+
+/// What a program says it is doing, in a [`ProgramStatus`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum ProgramState {
+    /// At rest, waiting for the user's next instruction, such as a tool at
+    /// its own prompt.
+    Idle = ffi::ProgramStatusState::IDLE,
+    /// Running on its own.
+    Working = ffi::ProgramStatusState::WORKING,
+    /// Finished a piece of work whose result is ready for the user.
+    Done = ffi::ProgramStatusState::DONE,
+    /// Can't continue until the user does something
+    /// ([`ProgramStatus::need`] says what).
+    Blocked = ffi::ProgramStatusState::BLOCKED,
+    /// Failed and stopped.
+    Error = ffi::ProgramStatusState::ERROR,
+    /// Not a state: remove the record with this report's id and every
+    /// record beneath it, or every record for an empty id.
+    Clear = ffi::ProgramStatusState::CLEAR,
+}
+
+/// What a [`ProgramState::Blocked`] program needs from the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum ProgramNeed {
+    /// The program didn't say, or isn't blocked.
+    Unsaid = ffi::ProgramStatusKind::NONE,
+    /// Approval to do something, such as "Apply these changes?".
+    Permission = ffi::ProgramStatusKind::PERMISSION,
+    /// An answer the user has to type.
+    Question = ffi::ProgramStatusKind::QUESTION,
+    /// A login, password, token or other credential.
+    Auth = ffi::ProgramStatusKind::AUTH,
+}
+
 /// Which part of its prompt the shell redraws after a resize, and so which
 /// part the terminal clears before reflowing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
@@ -3090,6 +3217,56 @@ handlers! {
         func(term, unsafe { ProgressReport::from_raw(progress) });
     }
 
+    /// Call the given function when the running program sends a program
+    /// status report (OSC 7501): what it is doing, for one of its records.
+    ///
+    /// Installing it also answers a program's support query
+    /// (`OSC 7501 ; ?`) through [`Self::on_pty_write`], so set that too or
+    /// programs never learn the protocol is supported. Only reports that
+    /// pass every check in the specification arrive here.
+    ///
+    /// The terminal keeps no records. To follow the specification, keep one
+    /// per [`ProgramStatus::id`]: a report replaces its record whole, and
+    /// [`ProgramState::Clear`] removes the record and those beneath it (all
+    /// of them for an empty id). Remove `working` and `blocked` records when
+    /// a prompt starts ([`SemanticPromptKind::PromptStart`] through
+    /// [`Self::on_semantic_prompt`]) or the program exits; keep `done` and
+    /// `error` until the user has seen them. A full reset (RIS) calls this
+    /// with an empty-id clear before [`Self::on_reset`].
+    ///
+    /// ```rust
+    /// use std::cell::RefCell;
+    /// use libghostty_vt::Terminal;
+    /// use libghostty_vt::terminal::{ProgramNeed, ProgramState};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let seen = RefCell::new(Vec::new());
+    /// let mut terminal = Terminal::new(80, 24)?;
+    /// terminal.on_program_status(|_term, report| {
+    ///     let message = String::from_utf8_lossy(report.message()).into_owned();
+    ///     seen.borrow_mut().push((report.state().ok(), report.need(), message));
+    /// })?;
+    ///
+    /// // "Apply?" in base64.
+    /// terminal.vt_write(b"\x1b]7501;state=blocked:kind=permission:msg=QXBwbHk/\x1b\\");
+    /// assert_eq!(
+    ///     *seen.borrow(),
+    ///     [(Some(ProgramState::Blocked), ProgramNeed::Permission, "Apply?".to_owned())]
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn on_program_status(
+        &mut self,
+        tag = PROGRAM_STATUS,
+        from = TerminalProgramStatusFn(report: *const ffi::TerminalProgramStatus),
+        to = <'t>ProgramStatusFn(ProgramStatus<'t>),
+    ) |term, func| {
+        // SAFETY: libghostty passes a valid report that is borrowed for the
+        // callback duration, which `ProgramStatus`'s lifetime enforces.
+        func(term, unsafe { ProgramStatus::from_raw(report) });
+    }
+
     /// Call the given function when the shell reports a step of a command
     /// through shell integration (OSC 133): a prompt starts, input starts,
     /// output starts, or the command ends.
@@ -3326,6 +3503,105 @@ mod tests {
         terminal.vt_write(input);
         drop(terminal);
         (seen.into_inner(), output.into_inner())
+    }
+
+    /// What a program status callback saw of one report.
+    #[derive(Debug, PartialEq, Eq)]
+    struct SeenStatus {
+        state: Option<ProgramState>,
+        need: ProgramNeed,
+        progress: Option<u8>,
+        id: Vec<u8>,
+        app: Vec<u8>,
+        title: Vec<u8>,
+        message: Vec<u8>,
+    }
+
+    /// Feed `input` to a terminal with a program status callback, returning
+    /// each report seen and what the terminal wrote back to the pty.
+    fn program_status(input: &[u8]) -> (Vec<SeenStatus>, Vec<u8>) {
+        let seen = RefCell::new(Vec::new());
+        let output = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new(80, 24).expect("terminal should initialize");
+        terminal
+            .on_pty_write(|_term, bytes| output.borrow_mut().extend_from_slice(bytes))
+            .expect("callback should register");
+        terminal
+            .on_program_status(|_term, report| {
+                seen.borrow_mut().push(SeenStatus {
+                    state: report.state().ok(),
+                    need: report.need(),
+                    progress: report.progress(),
+                    id: report.id().to_vec(),
+                    app: report.app().to_vec(),
+                    title: report.title().to_vec(),
+                    message: report.message().to_vec(),
+                });
+            })
+            .expect("callback should register");
+        terminal.vt_write(input);
+        drop(terminal);
+        (seen.into_inner(), output.into_inner())
+    }
+
+    #[test]
+    fn osc7501_program_status_reports_each_field() {
+        // "Tests" and "3 of 9 passed" in base64.
+        let (seen, output) = program_status(
+            b"\x1b]7501;state=working:id=build/test:app=cargo:progress=40:\
+              title=VGVzdHM=:msg=MyBvZiA5IHBhc3NlZA==\x07",
+        );
+        assert!(output.is_empty(), "a report is not answered");
+        assert_eq!(
+            seen,
+            [SeenStatus {
+                state: Some(ProgramState::Working),
+                need: ProgramNeed::Unsaid,
+                progress: Some(40),
+                id: b"build/test".to_vec(),
+                app: b"cargo".to_vec(),
+                title: b"Tests".to_vec(),
+                message: b"3 of 9 passed".to_vec(),
+            }]
+        );
+    }
+
+    #[test]
+    fn osc7501_program_status_needs_clears_and_answers() {
+        let (seen, output) = program_status(
+            b"\x1b]7501;state=blocked:kind=question\x1b\\\
+              \x1b]7501;state=done:kind=auth:progress=50\x1b\\\
+              \x1b]7501;state=clear\x1b\\\
+              \x1b]7501;?\x1b\\",
+        );
+        let states: Vec<_> = seen.iter().map(|s| (s.state, s.need, s.progress)).collect();
+        assert_eq!(
+            states,
+            [
+                (Some(ProgramState::Blocked), ProgramNeed::Question, None),
+                // A kind only for `blocked`, a progress only while at work.
+                (Some(ProgramState::Done), ProgramNeed::Unsaid, None),
+                (Some(ProgramState::Clear), ProgramNeed::Unsaid, None),
+            ]
+        );
+        assert!(seen.iter().all(|s| s.id.is_empty()), "the root record");
+        assert!(
+            output.windows(5).any(|w| w == b"7501;"),
+            "the support query is answered: {:?}",
+            String::from_utf8_lossy(&output)
+        );
+    }
+
+    #[test]
+    fn osc7501_program_status_drops_control_characters_and_clears_on_ris() {
+        // "a\x07b" in base64: a control character discards the whole report.
+        let (seen, _) = program_status(b"\x1b]7501;state=error:msg=YQdi\x1b\\\x1bc");
+        let states: Vec<_> = seen.iter().map(|s| (s.state, s.id.is_empty())).collect();
+        assert_eq!(
+            states,
+            [(Some(ProgramState::Clear), true)],
+            "only the reset's clear"
+        );
     }
 
     #[test]
