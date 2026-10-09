@@ -1224,8 +1224,10 @@ mod png_decoder_tests {
             )
         };
         let expected: Vec<u8> = pixels
-            .chunks_exact(2)
-            .flat_map(|ga| [ga[0], ga[0], ga[0], ga[1]])
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|&[g, a]| [g, g, g, a])
             .collect();
         assert_eq!(decode(&image.encode()), Some((3, 2, expected)));
     }

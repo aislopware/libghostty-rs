@@ -72,6 +72,7 @@ impl<'t, 's> FormatterOptions<'t, 's> {
     /// Specify whether VT output carries every row's prompt flag and every
     /// cell's semantic content (OSC 133), so a replay into a fresh terminal
     /// restores them. Rows with no text but a prompt flag are emitted too.
+    #[must_use]
     pub fn with_semantic_prompt(mut self, value: bool) -> Self {
         self.inner.semantic_prompt = value;
         self
@@ -79,6 +80,7 @@ impl<'t, 's> FormatterOptions<'t, 's> {
     /// Specify whether VT output ends with the blank rows after the last
     /// one with text, so a replay into a fresh terminal of the same size
     /// has every row: a screen with history keeps it whole.
+    #[must_use]
     pub fn with_trailing_rows(mut self, value: bool) -> Self {
         self.inner.trailing_rows = value;
         self
@@ -433,7 +435,10 @@ mod tests {
                 .with_trailing_rows(trailing);
             format_buf(&mut Formatter::new(&terminal, options).unwrap())
         };
-        assert!(vt(true).ends_with(b"top\r\n\r\n\r\n"), "every row but the last ends");
+        assert!(
+            vt(true).ends_with(b"top\r\n\r\n\r\n"),
+            "every row but the last ends"
+        );
         assert_eq!(vt(false), b"top", "left out unless asked");
     }
 

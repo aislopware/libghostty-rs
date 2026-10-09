@@ -68,7 +68,10 @@ fn a_drop_goes_to_the_program_that_asked_for_it() {
     terminal.vt_write(b"\x1b]72;t=m:o=1;text/uri-list\x1b\\");
     assert_eq!(events.borrow().last(), Some(&Event::Acceptance));
     assert_eq!(terminal.dnd_drop_accepted().unwrap(), Some(Operation::Copy));
-    assert_eq!(terminal.dnd_drop_accepted_mimes().unwrap(), Some(&b"text/uri-list\0"[..]));
+    assert_eq!(
+        terminal.dnd_drop_accepted_mimes().unwrap(),
+        Some(&b"text/uri-list\0"[..])
+    );
 
     assert_eq!(terminal.dnd_drop(AT, &mimes).unwrap(), Some(false));
     assert!(written(&output).starts_with("\x1b]72;t=M:x=4:y=2"));
@@ -76,25 +79,41 @@ fn a_drop_goes_to_the_program_that_asked_for_it() {
     terminal.vt_write(b"\x1b]72;t=r:x=1\x1b\\");
     assert_eq!(events.borrow().last(), Some(&Event::DataRequest));
     let request = terminal.dnd_drop_request().unwrap().unwrap();
-    assert_eq!((request.mime_index, request.mime), (0, &b"text/uri-list"[..]));
+    assert_eq!(
+        (request.mime_index, request.mime),
+        (0, &b"text/uri-list"[..])
+    );
     let id = request.id;
-    terminal.dnd_drop_respond_data(id, b"file:///tmp/a\r\n").unwrap();
+    terminal
+        .dnd_drop_respond_data(id, b"file:///tmp/a\r\n")
+        .unwrap();
     terminal.dnd_drop_respond_end(id).unwrap();
     // "file:///tmp/a\r\n"
     assert_eq!(
         written(&output),
         "\x1b]72;t=r:x=1:m=0;ZmlsZTovLy90bXAvYQ0K\x1b\\\x1b]72;t=r:x=1\x1b\\"
     );
-    assert!(terminal.dnd_drop_respond_end(id).is_err(), "a request is answered once");
+    assert!(
+        terminal.dnd_drop_respond_end(id).is_err(),
+        "a request is answered once"
+    );
 
     terminal.vt_write(b"\x1b]72;t=r:x=2\x1b\\");
     let request = terminal.dnd_drop_request().unwrap().unwrap();
-    terminal.dnd_drop_respond_error(request.id, Errno::Eio).unwrap();
+    terminal
+        .dnd_drop_respond_error(request.id, Errno::Eio)
+        .unwrap();
     let failed = written(&output);
-    assert!(failed.contains("t=R:x=2") && failed.contains("EIO"), "{failed:?}");
+    assert!(
+        failed.contains("t=R:x=2") && failed.contains("EIO"),
+        "{failed:?}"
+    );
 
     terminal.vt_write(b"\x1b]72;t=r:o=1\x1b\\");
-    assert_eq!(events.borrow().last(), Some(&Event::Concluded(Operation::Copy)));
+    assert_eq!(
+        events.borrow().last(),
+        Some(&Event::Concluded(Operation::Copy))
+    );
     terminal.vt_write(b"\x1b]72;t=A\x1b\\");
     assert!(!terminal.dnd_drop_registered().unwrap());
 }
