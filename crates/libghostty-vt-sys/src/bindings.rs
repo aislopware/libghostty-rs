@@ -61,6 +61,8 @@ pub const DA_DEVICE_TYPE_VT420: u16 = 41;
 pub const DA_DEVICE_TYPE_VT510: u16 = 61;
 pub const DA_DEVICE_TYPE_VT520: u16 = 64;
 pub const DA_DEVICE_TYPE_VT525: u16 = 65;
+pub const KITTY_DND_OPERATIONS_COPY: u32 = 1;
+pub const KITTY_DND_OPERATIONS_MOVE: u32 = 2;
 pub const MODS_SHIFT: u16 = 1;
 pub const MODS_CTRL: u16 = 2;
 pub const MODS_ALT: u16 = 4;
@@ -931,7 +933,9 @@ pub mod RowData {
     pub const KITTY_VIRTUAL_PLACEHOLDER: Type = 7;
     #[doc = " Whether this row is dirty and requires a redraw.\n\n Output type: bool *"]
     pub const DIRTY: Type = 8;
-    #[doc = " Whether this row is dirty and requires a redraw.\n\n Output type: bool *"]
+    #[doc = " Whether any cells in this row hold only a background colour, with no\n style of their own (may have false positives).\n\n Output type: bool *"]
+    pub const BACKGROUND: Type = 9;
+    #[doc = " Whether any cells in this row hold only a background colour, with no\n style of their own (may have false positives).\n\n Output type: bool *"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 unsafe extern "C" {
@@ -1874,7 +1878,9 @@ pub mod OscCommandType {
     pub const KITTY_DESKTOP_NOTIFICATION: Type = 26;
     #[doc = " An OSC sequence whose number the parser does not implement. Read it\n with the GHOSTTY_OSC_DATA_UNKNOWN_* data types.\n\n Only produced when GHOSTTY_OSC_OPT_UNKNOWN_MAX_BYTES is nonzero.\n Otherwise these sequences are GHOSTTY_OSC_COMMAND_INVALID."]
     pub const UNKNOWN: Type = 27;
-    #[doc = " An OSC sequence whose number the parser does not implement. Read it\n with the GHOSTTY_OSC_DATA_UNKNOWN_* data types.\n\n Only produced when GHOSTTY_OSC_OPT_UNKNOWN_MAX_BYTES is nonzero.\n Otherwise these sequences are GHOSTTY_OSC_COMMAND_INVALID."]
+    #[doc = " A program status report or support query (OSC 7501), which a program\n sends to say what it is doing, such as working or waiting on the user.\n\n The OSC parser only identifies this command. To receive the report's\n contents, use a terminal with GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS\n instead (see GhosttyTerminalProgramStatus)."]
+    pub const PROGRAM_STATUS: Type = 28;
+    #[doc = " A program status report or support query (OSC 7501), which a program\n sends to say what it is doing, such as working or waiting on the user.\n\n The OSC parser only identifies this command. To receive the report's\n contents, use a terminal with GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS\n instead (see GhosttyTerminalProgramStatus)."]
     pub const TYPE_MAX_VALUE: Type = 2147483647;
 }
 pub mod OscTerminator {
@@ -1999,6 +2005,428 @@ unsafe extern "C" {
         buf: *mut ::std::os::raw::c_char,
         buf_len: usize,
         out_written: *mut usize,
+    ) -> Result::Type;
+}
+pub mod KittyDndEvent {
+    #[doc = " A drag and drop state change, delivered through the kitty_dnd effect.\n Details are read with ghostty_kitty_dnd_get() and the other functions\n in this group."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The program registered or unregistered to accept drops."]
+    pub const REGISTRATION: Type = 0;
+    #[doc = " The program answered the drag over the terminal."]
+    pub const ACCEPTANCE: Type = 1;
+    #[doc = " A drop data request needs serving."]
+    pub const DATA_REQUEST: Type = 2;
+    #[doc = " The drop ended with no operation (the program canceled it)."]
+    pub const CONCLUDED_NONE: Type = 3;
+    #[doc = " The drop ended with the program copying the data."]
+    pub const CONCLUDED_COPY: Type = 4;
+    #[doc = " The drop ended with the program moving the data."]
+    pub const CONCLUDED_MOVE: Type = 5;
+    #[doc = " The program enabled or disabled offering drags."]
+    pub const OFFERS: Type = 6;
+    #[doc = " The program asked to start its offered drag."]
+    pub const DRAG_START: Type = 7;
+    #[doc = " The program changed the image of the started drag."]
+    pub const DRAG_IMAGE: Type = 8;
+    #[doc = " Requested drag data arrived or failed."]
+    pub const DRAG_DATA: Type = 9;
+    #[doc = " The native drag in progress must be canceled."]
+    pub const DRAG_CANCEL: Type = 10;
+    #[doc = " The native drag in progress must be canceled."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndOperation {
+    #[doc = " A drag and drop operation."]
+    pub type Type = ::std::os::raw::c_int;
+    pub const NONE: Type = 0;
+    pub const COPY: Type = 1;
+    pub const MOVE: Type = 2;
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndErrno {
+    #[doc = " A POSIX error name used by the protocol."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Success."]
+    pub const OK: Type = 0;
+    #[doc = " Success."]
+    pub const EPERM: Type = 1;
+    #[doc = " Success."]
+    pub const ENOENT: Type = 2;
+    #[doc = " Success."]
+    pub const EIO: Type = 3;
+    #[doc = " Success."]
+    pub const EINVAL: Type = 4;
+    #[doc = " Success."]
+    pub const EMFILE: Type = 5;
+    #[doc = " Success."]
+    pub const ENOMEM: Type = 6;
+    #[doc = " Success."]
+    pub const EFBIG: Type = 7;
+    #[doc = " Success."]
+    pub const EISDIR: Type = 8;
+    #[doc = " Success."]
+    pub const ENOSPC: Type = 9;
+    #[doc = " Success."]
+    pub const EUNKNOWN: Type = 10;
+    #[doc = " Success."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndPhase {
+    #[doc = " The phase of the drag the program offers."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " No drag is offered."]
+    pub const NONE: Type = 0;
+    #[doc = " The program is building an offer."]
+    pub const BUILDING: Type = 1;
+    #[doc = " The program asked to start the drag; report the result."]
+    pub const STARTING: Type = 2;
+    #[doc = " The native drag is in progress."]
+    pub const STARTED: Type = 3;
+    #[doc = " The native drag was dropped; the target may still request data."]
+    pub const DROPPED: Type = 4;
+    #[doc = " The native drag was dropped; the target may still request data."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndImageFormat {
+    #[doc = " The format of a drag image."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " UTF-8 text to render as the image. The width and height are the\n numerator and denominator of the font size scale (0 meaning 1), and\n the opacity is the background's."]
+    pub const TEXT: Type = 0;
+    #[doc = " 24-bit RGB pixels. Expanded to RGBA when the drag starts."]
+    pub const RGB: Type = 24;
+    #[doc = " 32-bit RGBA pixels."]
+    pub const RGBA: Type = 32;
+    #[doc = " A PNG image, to be decoded by the embedder."]
+    pub const PNG: Type = 100;
+    #[doc = " A PNG image, to be decoded by the embedder."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndReport {
+    #[doc = " The kind of a drag progress report."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The drop target accepted the drag. The value is the index of the\n offered MIME type it prefers, or -1 if unknown."]
+    pub const ACCEPTED: Type = 0;
+    #[doc = " The drag's operation changed. The value is a GhosttyKittyDndOperation."]
+    pub const OPERATION: Type = 1;
+    #[doc = " The drag was dropped onto a target. The value is ignored."]
+    pub const DROPPED: Type = 2;
+    #[doc = " The drag finished, which ends it. The value is nonzero if it was\n canceled."]
+    pub const FINISHED: Type = 3;
+    #[doc = " The drag finished, which ends it. The value is nonzero if it was\n canceled."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndDataStatus {
+    #[doc = " The status of drag data received from the program."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " More data may follow."]
+    pub const PENDING: Type = 0;
+    #[doc = " All data has been received."]
+    pub const COMPLETE: Type = 1;
+    #[doc = " The program failed to provide the data."]
+    pub const FAILED: Type = 2;
+    #[doc = " The program failed to provide the data."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod KittyDndData {
+    #[doc = " Values readable with ghostty_kitty_dnd_get()."]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Invalid. Never results in any data."]
+    pub const INVALID: Type = 0;
+    #[doc = " Whether the program is registered to accept drops.\n\n Output type: bool *"]
+    pub const DROP_REGISTERED: Type = 1;
+    #[doc = " The MIME types the program registered with, space-separated and\n usually empty. Only needed to register types with the OS ahead of a\n drag. GHOSTTY_NO_VALUE when not registered.\n\n Output type: GhosttyString *"]
+    pub const DROP_REGISTERED_MIMES: Type = 2;
+    #[doc = " The operation the program accepts for the drag over the terminal.\n GHOSTTY_NO_VALUE until it answered; use your default (typically\n copy) until then.\n\n Output type: GhosttyKittyDndOperation *"]
+    pub const DROP_ACCEPTED: Type = 3;
+    #[doc = " The MIME types the program accepts for the drag over the terminal,\n most preferred first, each followed by a NUL byte. Empty when the\n program didn't say. GHOSTTY_NO_VALUE until it answered.\n\n Output type: GhosttyString *"]
+    pub const DROP_ACCEPTED_MIMES: Type = 4;
+    #[doc = " The drop data request to serve. GHOSTTY_NO_VALUE when there is\n none.\n\n Output type: GhosttyKittyDndDataRequest *"]
+    pub const DROP_REQUEST: Type = 5;
+    #[doc = " Whether the program offers drags.\n\n Output type: bool *"]
+    pub const DRAG_ENABLED: Type = 6;
+    #[doc = " The phase of the drag the program offers.\n\n Output type: GhosttyKittyDndPhase *"]
+    pub const DRAG_PHASE: Type = 7;
+    #[doc = " The operations the offered drag allows, as a bitmask of\n GHOSTTY_KITTY_DND_OPERATIONS_COPY and GHOSTTY_KITTY_DND_OPERATIONS_MOVE.\n GHOSTTY_NO_VALUE when no drag is offered.\n\n Output type: uint32_t *"]
+    pub const DRAG_OPERATIONS: Type = 8;
+    #[doc = " The number of MIME types of the offered drag.\n\n Output type: size_t *"]
+    pub const DRAG_MIME_COUNT: Type = 9;
+    #[doc = " The number of images of the offered drag. Zero once the drag\n started.\n\n Output type: size_t *"]
+    pub const DRAG_IMAGE_COUNT: Type = 10;
+    #[doc = " The index of the image to show for the drag. GHOSTTY_NO_VALUE for\n no image. Once the drag started this is not checked against the\n images, which you copied when it started.\n\n Output type: uint32_t *"]
+    pub const DRAG_CURRENT_IMAGE: Type = 11;
+    #[doc = " The index of the image to show for the drag. GHOSTTY_NO_VALUE for\n no image. Once the drag started this is not checked against the\n images, which you copied when it started.\n\n Output type: uint32_t *"]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+#[doc = " A position on the terminal.\n\n This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct KittyDndPosition {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " Grid cell column, zero-based from the left."]
+    pub cell_x: u32,
+    #[doc = " Grid cell row, zero-based from the top."]
+    pub cell_y: u32,
+    #[doc = " Pixels from the left of the terminal's content area."]
+    pub pixel_x: i32,
+    #[doc = " Pixels from the top of the terminal's content area."]
+    pub pixel_y: i32,
+    #[doc = " The operations a native drag allows, as a bitmask of\n GHOSTTY_KITTY_DND_OPERATIONS_COPY and GHOSTTY_KITTY_DND_OPERATIONS_MOVE.\n Ignored by ghostty_kitty_dnd_drag_gesture()."]
+    pub operations: u32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of KittyDndPosition"][::std::mem::size_of::<KittyDndPosition>() - 32usize];
+    ["Alignment of KittyDndPosition"][::std::mem::align_of::<KittyDndPosition>() - 8usize];
+    ["Offset of field: KittyDndPosition::size"]
+        [::std::mem::offset_of!(KittyDndPosition, size) - 0usize];
+    ["Offset of field: KittyDndPosition::cell_x"]
+        [::std::mem::offset_of!(KittyDndPosition, cell_x) - 8usize];
+    ["Offset of field: KittyDndPosition::cell_y"]
+        [::std::mem::offset_of!(KittyDndPosition, cell_y) - 12usize];
+    ["Offset of field: KittyDndPosition::pixel_x"]
+        [::std::mem::offset_of!(KittyDndPosition, pixel_x) - 16usize];
+    ["Offset of field: KittyDndPosition::pixel_y"]
+        [::std::mem::offset_of!(KittyDndPosition, pixel_y) - 20usize];
+    ["Offset of field: KittyDndPosition::operations"]
+        [::std::mem::offset_of!(KittyDndPosition, operations) - 24usize];
+};
+#[doc = " A drop data request to serve.\n\n This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct KittyDndDataRequest {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " Identifies the request when answering it. Requests are never\n reused, so an answer to a request the program abandoned is\n rejected rather than answering another."]
+    pub id: u32,
+    #[doc = " Zero-based index into the MIME types given to ghostty_kitty_dnd_drop()."]
+    pub mime_index: u32,
+    #[doc = " The MIME type to read from the native drop."]
+    pub mime: String,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of KittyDndDataRequest"][::std::mem::size_of::<KittyDndDataRequest>() - 32usize];
+    ["Alignment of KittyDndDataRequest"][::std::mem::align_of::<KittyDndDataRequest>() - 8usize];
+    ["Offset of field: KittyDndDataRequest::size"]
+        [::std::mem::offset_of!(KittyDndDataRequest, size) - 0usize];
+    ["Offset of field: KittyDndDataRequest::id"]
+        [::std::mem::offset_of!(KittyDndDataRequest, id) - 8usize];
+    ["Offset of field: KittyDndDataRequest::mime_index"]
+        [::std::mem::offset_of!(KittyDndDataRequest, mime_index) - 12usize];
+    ["Offset of field: KittyDndDataRequest::mime"]
+        [::std::mem::offset_of!(KittyDndDataRequest, mime) - 16usize];
+};
+impl Default for KittyDndDataRequest {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " A drag image.\n\n This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct KittyDndImage {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " The image format."]
+    pub format: KittyDndImageFormat::Type,
+    #[doc = " Width in pixels, or the font scale numerator for text."]
+    pub width: u32,
+    #[doc = " Height in pixels, or the font scale denominator for text."]
+    pub height: u32,
+    #[doc = " Background opacity for text, 0 (transparent) to 1024 (opaque)."]
+    pub opacity: u32,
+    #[doc = " The image data."]
+    pub data: *const u8,
+    #[doc = " The length of the image data in bytes."]
+    pub data_len: usize,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of KittyDndImage"][::std::mem::size_of::<KittyDndImage>() - 40usize];
+    ["Alignment of KittyDndImage"][::std::mem::align_of::<KittyDndImage>() - 8usize];
+    ["Offset of field: KittyDndImage::size"][::std::mem::offset_of!(KittyDndImage, size) - 0usize];
+    ["Offset of field: KittyDndImage::format"]
+        [::std::mem::offset_of!(KittyDndImage, format) - 8usize];
+    ["Offset of field: KittyDndImage::width"]
+        [::std::mem::offset_of!(KittyDndImage, width) - 12usize];
+    ["Offset of field: KittyDndImage::height"]
+        [::std::mem::offset_of!(KittyDndImage, height) - 16usize];
+    ["Offset of field: KittyDndImage::opacity"]
+        [::std::mem::offset_of!(KittyDndImage, opacity) - 20usize];
+    ["Offset of field: KittyDndImage::data"][::std::mem::offset_of!(KittyDndImage, data) - 24usize];
+    ["Offset of field: KittyDndImage::data_len"]
+        [::std::mem::offset_of!(KittyDndImage, data_len) - 32usize];
+};
+impl Default for KittyDndImage {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Drag data received from the program.\n\n This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct KittyDndDragData {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " Data received since the last call."]
+    pub data: *const u8,
+    #[doc = " The length of the data in bytes."]
+    pub data_len: usize,
+    #[doc = " Whether more data may follow, all has arrived, or it failed."]
+    pub status: KittyDndDataStatus::Type,
+    #[doc = " The program's error when the status is failed."]
+    pub error: KittyDndErrno::Type,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of KittyDndDragData"][::std::mem::size_of::<KittyDndDragData>() - 32usize];
+    ["Alignment of KittyDndDragData"][::std::mem::align_of::<KittyDndDragData>() - 8usize];
+    ["Offset of field: KittyDndDragData::size"]
+        [::std::mem::offset_of!(KittyDndDragData, size) - 0usize];
+    ["Offset of field: KittyDndDragData::data"]
+        [::std::mem::offset_of!(KittyDndDragData, data) - 8usize];
+    ["Offset of field: KittyDndDragData::data_len"]
+        [::std::mem::offset_of!(KittyDndDragData, data_len) - 16usize];
+    ["Offset of field: KittyDndDragData::status"]
+        [::std::mem::offset_of!(KittyDndDragData, status) - 24usize];
+    ["Offset of field: KittyDndDragData::error"]
+        [::std::mem::offset_of!(KittyDndDragData, error) - 28usize];
+};
+impl Default for KittyDndDragData {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Callback function type for drag and drop state changes.\n\n Called when the running program changes drag and drop state in a way\n the embedder may need to act on. The functions in @ref kitty_dnd may be\n called from within this callback.\n"]
+pub type TerminalKittyDndFn = ::std::option::Option<
+    unsafe extern "C" fn(
+        terminal: Terminal,
+        userdata: *mut ::std::os::raw::c_void,
+        event: KittyDndEvent::Type,
+    ),
+>;
+unsafe extern "C" {
+    #[doc = " Read drag and drop state.\n\n         now, or GHOSTTY_INVALID_VALUE for invalid arguments"]
+    pub fn ghostty_kitty_dnd_get(
+        terminal: Terminal,
+        data: KittyDndData::Type,
+        out: *mut ::std::os::raw::c_void,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report a native drag moving over the terminal.\n\n        discarded an unconcluded previous drop, which you must finish\n        natively with no operation\n         registered to accept drops, GHOSTTY_OUT_OF_MEMORY, or\n         GHOSTTY_INVALID_VALUE for invalid arguments or no write_pty\n         effect"]
+    pub fn ghostty_kitty_dnd_drop_move(
+        terminal: Terminal,
+        position: *const KittyDndPosition,
+        mimes: *const String,
+        mimes_len: usize,
+        out_discarded: *mut bool,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report a native drag leaving the terminal without dropping.\n\n         registered to accept drops, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drop_leave(terminal: Terminal) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report a native drop onto the terminal. Keep the native drop open to\n serve the program's data requests until it concludes the drop.\n"]
+    pub fn ghostty_kitty_dnd_drop(
+        terminal: Terminal,
+        position: *const KittyDndPosition,
+        mimes: *const String,
+        mimes_len: usize,
+        out_discarded: *mut bool,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Send some of the data for the drop data request being served. Data is\n sent as given, so it can be passed on as the native drop delivers it.\n\n         being served, GHOSTTY_NO_VALUE, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drop_respond_data(
+        terminal: Terminal,
+        id: u32,
+        data: *const u8,
+        data_len: usize,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Finish the drop data request being served. The next request, if any,\n is then available with GHOSTTY_KITTY_DND_DATA_DROP_REQUEST.\n"]
+    pub fn ghostty_kitty_dnd_drop_respond_end(terminal: Terminal, id: u32) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Fail the drop data request being served, e.g. because reading it from\n the native drop failed. The next request, if any, is then available\n with GHOSTTY_KITTY_DND_DATA_DROP_REQUEST.\n"]
+    pub fn ghostty_kitty_dnd_drop_respond_error(
+        terminal: Terminal,
+        id: u32,
+        error: KittyDndErrno::Type,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Read a MIME type of the offered drag.\n\n         GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_mime(
+        terminal: Terminal,
+        index: usize,
+        out: *mut String,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Read the data the program pre-sent for a MIME type of the offered\n drag. Only available until the drag starts.\n\n         GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_pre_sent(
+        terminal: Terminal,
+        index: usize,
+        out: *mut String,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Read an image of the offered drag. Only available until the drag\n starts.\n\n         GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_image(
+        terminal: Terminal,
+        index: usize,
+        out: *mut KittyDndImage,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Ask the program to offer a drag, when the user started the platform's\n drag gesture over the terminal.\n\n         drags, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_gesture(
+        terminal: Terminal,
+        position: *const KittyDndPosition,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report the result of starting the native drag the program asked for.\n Copy the offer's pre-sent data and images first: a successful start\n frees them.\n\n        why not (GHOSTTY_KITTY_DND_ERRNO_EPERM when the user already\n        released the drag)\n         GHOSTTY_NO_VALUE, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_start_result(
+        terminal: Terminal,
+        error: KittyDndErrno::Type,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Report the progress of the native drag to the program. Ignored unless\n the drag started.\n"]
+    pub fn ghostty_kitty_dnd_drag_report(
+        terminal: Terminal,
+        kind: KittyDndReport::Type,
+        value: i32,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Request the data for a MIME type of the started drag from the\n program, for a drop target that wants it. Sent once until the data is\n complete or failed and taken.\n\n         the index is out of range, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_request_data(terminal: Terminal, index: usize) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Take the data received for a requested MIME type of the started drag.\n\n         the index is out of range, or GHOSTTY_INVALID_VALUE"]
+    pub fn ghostty_kitty_dnd_drag_take_data(
+        terminal: Terminal,
+        index: usize,
+        out: *mut KittyDndDragData,
     ) -> Result::Type;
 }
 pub mod KittyGraphicsData {
@@ -2974,6 +3402,18 @@ pub type TerminalDesktopNotificationFn = ::std::option::Option<
         notification: *const TerminalDesktopNotification,
     ),
 >;
+pub mod TerminalPromptRedraw {
+    #[doc = " Which part of its prompt the shell redraws after a resize.\n\n Before reflowing the primary screen, the terminal clears the part of the\n prompt at the cursor that the shell says it will draw again. A shell\n reports this with the `redraw` option of OSC 133;A. A terminal starts at\n `GHOSTTY_TERMINAL_PROMPT_REDRAW_NONE`, and a full reset (RIS) returns to\n it.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The shell redraws nothing, so nothing is cleared."]
+    pub const NONE: Type = 0;
+    #[doc = " The shell redraws its whole prompt (`redraw=1`)."]
+    pub const FULL: Type = 1;
+    #[doc = " The shell redraws only the last row of its prompt (`redraw=last`,\n bash)."]
+    pub const LAST: Type = 2;
+    #[doc = " The shell redraws only the last row of its prompt (`redraw=last`,\n bash)."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
 pub mod TerminalProgressState {
     #[doc = " State of a terminal progress report.\n"]
     pub type Type = ::std::os::raw::c_int;
@@ -3028,6 +3468,98 @@ pub type TerminalProgressReportFn = ::std::option::Option<
         terminal: Terminal,
         userdata: *mut ::std::os::raw::c_void,
         report: *const TerminalProgressReport,
+    ),
+>;
+pub mod ProgramStatusState {
+    #[doc = " What a program says it is doing, in a program status report (OSC 7501).\n\n See GhosttyTerminalProgramStatus for an overview of the protocol.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " At rest, waiting for the user's next instruction. For example, an\n interactive tool sitting at its own prompt."]
+    pub const IDLE: Type = 0;
+    #[doc = " Running on its own. The report may include a progress percentage."]
+    pub const WORKING: Type = 1;
+    #[doc = " Finished a piece of work, and the result is ready for the user to\n look at."]
+    pub const DONE: Type = 2;
+    #[doc = " Can't continue until the user does something. `kind` says what the\n program needs and `message` says why. The report may include a\n progress percentage."]
+    pub const BLOCKED: Type = 3;
+    #[doc = " Failed and stopped."]
+    pub const ERROR: Type = 4;
+    #[doc = " Not a real state. Remove the record with this report's id and every\n record beneath it. If the id is empty, remove every record."]
+    pub const CLEAR: Type = 5;
+    #[doc = " Not a real state. Remove the record with this report's id and every\n record beneath it. If the id is empty, remove every record."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod ProgramStatusKind {
+    #[doc = " What a blocked program needs from the user, in a program status report\n (OSC 7501).\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The program didn't say, or the state isn't\n GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED."]
+    pub const NONE: Type = 0;
+    #[doc = " Approval to do something, such as \"Apply these changes?\"."]
+    pub const PERMISSION: Type = 1;
+    #[doc = " An answer the user has to type."]
+    pub const QUESTION: Type = 2;
+    #[doc = " A login, password, token, or other credential."]
+    pub const AUTH: Type = 3;
+    #[doc = " A login, password, token, or other credential."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+#[doc = " A program status report (OSC 7501).\n\n The program status protocol lets a program tell the terminal what it is\n doing: idle, working, done, waiting on the user, or failed, and why. It\n is meant for long-running work like builds, deploys, and coding agents,\n where the user is often looking at something else and wants to know when\n the work finishes or needs them. The protocol only describes state. How\n to show it, if at all, is up to your application.\n\n The full specification is at\n https://www.superlogical.com/rex/docs/build/program-status\n\n For example, a program waiting for the user to approve a change sends\n this, where ST is the string terminator (ESC \\ or BEL):\n\n ESC ] 7501 ; state=blocked:kind=permission:app=terraform:msg=QXBwbHk/ ST\n\n The callback then receives a report with:\n\n - `state`: GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED\n - `kind`: GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION\n - `progress`: -1, because the program didn't send one\n - `id`: empty, because this is the root record\n - `app`: \"terraform\"\n - `title`: empty\n - `message`: \"Apply?\", decoded from the base64 in `msg`\n\n Only reports that pass every check in the specification reach the\n callback. Text that the program didn't send is an empty string (len=0),\n never NULL. All strings are only valid during the callback, so copy any\n you want to keep.\n\n This is a sized struct. Later versions may add fields at the end, and\n `size` tells you which fields are present. Every field below has been\n present since this struct was introduced.\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct TerminalProgramStatus {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " What the program is doing."]
+    pub state: ProgramStatusState::Type,
+    #[doc = " What the program needs from the user. Only set for\n GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED. It is\n GHOSTTY_PROGRAM_STATUS_KIND_NONE for other states, when the program\n didn't say, or when it sent a kind this version doesn't know."]
+    pub kind: ProgramStatusKind::Type,
+    #[doc = " How far along the work is, from 0 through 100. Only set for\n GHOSTTY_PROGRAM_STATUS_STATE_WORKING and\n GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED. It is -1 for other states, when\n the program didn't say, or when it sent a value outside that range."]
+    pub progress: i8,
+    #[doc = " Which record this report is about. Empty for the root record.\n\n A program that only reports on itself leaves this empty. A program\n that reports on several things at once gives each its own id, such as\n \"us-east\" and \"eu-west\" for a deploy to two regions. A \"/\" makes one\n record the child of another, so \"build/test\" is a child of \"build\".\n The parent record doesn't have to exist."]
+    pub id: String,
+    #[doc = " A stable name for the program that a machine can match on, such as\n \"cargo\" or \"terraform\"."]
+    pub app: String,
+    #[doc = " A short label for the record, meant for people. Programs that report\n several records use this to tell them apart."]
+    pub title: String,
+    #[doc = " One line of text for people, saying what the record is doing,\n waiting for, or has finished. You may shorten it to fit, but don't\n try to read meaning into it."]
+    pub message: String,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalProgramStatus"][::std::mem::size_of::<TerminalProgramStatus>() - 88usize];
+    ["Alignment of TerminalProgramStatus"]
+        [::std::mem::align_of::<TerminalProgramStatus>() - 8usize];
+    ["Offset of field: TerminalProgramStatus::size"]
+        [::std::mem::offset_of!(TerminalProgramStatus, size) - 0usize];
+    ["Offset of field: TerminalProgramStatus::state"]
+        [::std::mem::offset_of!(TerminalProgramStatus, state) - 8usize];
+    ["Offset of field: TerminalProgramStatus::kind"]
+        [::std::mem::offset_of!(TerminalProgramStatus, kind) - 12usize];
+    ["Offset of field: TerminalProgramStatus::progress"]
+        [::std::mem::offset_of!(TerminalProgramStatus, progress) - 16usize];
+    ["Offset of field: TerminalProgramStatus::id"]
+        [::std::mem::offset_of!(TerminalProgramStatus, id) - 24usize];
+    ["Offset of field: TerminalProgramStatus::app"]
+        [::std::mem::offset_of!(TerminalProgramStatus, app) - 40usize];
+    ["Offset of field: TerminalProgramStatus::title"]
+        [::std::mem::offset_of!(TerminalProgramStatus, title) - 56usize];
+    ["Offset of field: TerminalProgramStatus::message"]
+        [::std::mem::offset_of!(TerminalProgramStatus, message) - 72usize];
+};
+impl Default for TerminalProgramStatus {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Callback function type for program status reports (OSC 7501).\n\n Called synchronously each time the running program sends a valid\n report. See GhosttyTerminalProgramStatus for what a report contains.\n\n The terminal doesn't store reports, so your application keeps them. To\n follow the specification, keep one record per id. A report with an empty\n id is about the root record, the program itself. The records follow\n these rules:\n\n - A report replaces its record completely. A value the report leaves\n   out is gone from the record afterwards. It doesn't keep its old value.\n - A GHOSTTY_PROGRAM_STATUS_STATE_CLEAR report removes the record with\n   its id and every record beneath it, so clearing \"build\" also removes\n   \"build/test\". A clear report with an empty id removes every record.\n - When a new shell prompt starts (GHOSTTY_SEMANTIC_PROMPT_PROMPT_START\n   from the GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT callback) or the program\n   running in the terminal exits, remove `working` and `blocked` records.\n   You may remove `idle` records too. Keep `done` and `error` records\n   until the user has seen them, for example until they next focus the\n   terminal.\n - Keep at most 256 records, and allow at least 64. When a new record\n   would go over your limit, remove the one that was updated longest ago.\n\n A full reset (RIS, `ESC c`) removes every record. When that happens,\n the terminal calls this with a GHOSTTY_PROGRAM_STATUS_STATE_CLEAR report\n and an empty id, and then calls the GHOSTTY_TERMINAL_OPT_RESET callback.\n\n `title` and `message` are already decoded and contain no control\n characters, but they are still untrusted text from the program. Don't\n treat them as markup. If you show them outside the terminal, such as in\n a tab or a notification, remove invisible formatting characters like\n text direction overrides, and say which terminal the text came from so\n a program can't pretend to be one running elsewhere.\n\n Example, where `Records`, `records_clear`, and `records_put` stand in for\n your application's own storage:\n\n void on_program_status(GhosttyTerminal terminal,\n                        void* userdata,\n                        const GhosttyTerminalProgramStatus* report) {\n   (void)terminal;\n   Records* records = userdata;\n\n   if (report->state == GHOSTTY_PROGRAM_STATUS_STATE_CLEAR) {\n     // Remove this record and every record beneath it. An empty id\n     // removes every record.\n     records_clear(records, report->id);\n     return;\n   }\n\n   // Replace the whole record. The strings are only valid during this\n   // call, so records_put must copy them.\n   records_put(records, report->id, report->state, report->message);\n }\n\n // Set write_pty too, so programs that check for support get a reply.\n ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, records);\n ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,\n                      (const void*)on_write_pty);\n ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS,\n                      (const void*)on_program_status);\n\n               call.\n"]
+pub type TerminalProgramStatusFn = ::std::option::Option<
+    unsafe extern "C" fn(
+        terminal: Terminal,
+        userdata: *mut ::std::os::raw::c_void,
+        report: *const TerminalProgramStatus,
     ),
 >;
 pub mod SemanticPromptKind {
@@ -3116,7 +3648,7 @@ pub type TerminalSemanticPromptFn = ::std::option::Option<
         event: *const TerminalSemanticPrompt,
     ),
 >;
-#[doc = " Callback function type for reset.\n\n Called when the running program performs a full reset (RIS, `ESC c`).\n A full reset clears the screen and scrollback, returns modes to their\n defaults, and clears the title and working directory. Use this callback\n to reset any state your application keeps about what's running in the\n terminal, such as the current command.\n\n The terminal has already reset itself when this is called. The\n GHOSTTY_TERMINAL_OPT_TITLE_CHANGED and GHOSTTY_TERMINAL_OPT_PWD_CHANGED\n callbacks are not called for the cleared title and working directory,\n so update anything you show for them here. A full reset also removes\n any progress report. If you set GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT,\n that callback is called before this one.\n\n A soft reset (DECSTR, `CSI ! p`) only resets a few modes and doesn't\n call this.\n\n"]
+#[doc = " Callback function type for reset.\n\n Called when the running program performs a full reset (RIS, `ESC c`).\n A full reset clears the screen and scrollback, returns modes to their\n defaults, and clears the title and working directory. Use this callback\n to reset any state your application keeps about what's running in the\n terminal, such as the current command.\n\n The terminal has already reset itself when this is called. The\n GHOSTTY_TERMINAL_OPT_TITLE_CHANGED and GHOSTTY_TERMINAL_OPT_PWD_CHANGED\n callbacks are not called for the cleared title and working directory,\n so update anything you show for them here. A full reset also removes\n any progress report and program status records. If you set\n GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT or\n GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, those callbacks are called before\n this one.\n\n A soft reset (DECSTR, `CSI ! p`) keeps the screen, title and working\n directory, and doesn't call this.\n\n"]
 pub type TerminalResetFn = ::std::option::Option<
     unsafe extern "C" fn(terminal: Terminal, userdata: *mut ::std::os::raw::c_void),
 >;
@@ -3260,9 +3792,9 @@ pub mod TerminalOption {
     pub const CONTINUATION_MAX_BYTES: Type = 31;
     #[doc = " Enable window title reports in response to CSI 21 t.\n\n This is disabled by default because a running program can set a title and\n query it back into the pty input stream, potentially injecting commands\n that execute after user interaction. Passing NULL or a pointer to false\n disables title reporting.\n\n Input type: bool*"]
     pub const TITLE_REPORT: Type = 32;
-    #[doc = " Set the reset default for a terminal mode.\n\n This unconditionally updates both the current value and the value restored\n by a full terminal reset (RIS).\n\n Some recognized modes represent transitions or mirror additional terminal\n state and cannot safely be configured as reset defaults. Those modes return\n GHOSTTY_INVALID_VALUE. A NULL value pointer also returns\n GHOSTTY_INVALID_VALUE.\n\n Input type: GhosttyTerminalModeConfig*"]
+    #[doc = " Set the reset default for a terminal mode.\n\n This unconditionally updates both the current value and the value restored\n by a terminal reset. RIS restores every mode, and DECSTR only a subset.\n\n Some recognized modes represent transitions or mirror additional terminal\n state and cannot safely be configured as reset defaults. Those modes return\n GHOSTTY_INVALID_VALUE. A NULL value pointer also returns\n GHOSTTY_INVALID_VALUE.\n\n Input type: GhosttyTerminalModeConfig*"]
     pub const MODE_DEFAULT: Type = 33;
-    #[doc = " Set the current value of a terminal mode.\n\n This does not change the value restored by a full terminal reset (RIS).\n A NULL value pointer or unknown mode returns GHOSTTY_INVALID_VALUE.\n\n Input type: GhosttyTerminalModeConfig*"]
+    #[doc = " Set the current value of a terminal mode.\n\n This does not change the value restored by a reset (RIS or DECSTR).\n A NULL value pointer or unknown mode returns GHOSTTY_INVALID_VALUE.\n\n Input type: GhosttyTerminalModeConfig*"]
     pub const MODE: Type = 34;
     #[doc = " Callback for escape sequences that libghostty-vt does not implement.\n Set to NULL to stop receiving them.\n\n GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES must also be set, or the\n callback is never called. See the Unsupported Sequences section of the\n terminal documentation for an example.\n\n Input type: GhosttyTerminalUnknownSequenceFn"]
     pub const UNKNOWN_SEQUENCE: Type = 35;
@@ -3282,7 +3814,15 @@ pub mod TerminalOption {
     pub const SEMANTIC_PROMPT: Type = 42;
     #[doc = " Callback invoked after the running program performs a full reset\n (RIS, ESC c). Set to NULL to ignore resets.\n\n Input type: GhosttyTerminalResetFn"]
     pub const RESET: Type = 43;
-    #[doc = " Callback invoked after the running program performs a full reset\n (RIS, ESC c). Set to NULL to ignore resets.\n\n Input type: GhosttyTerminalResetFn"]
+    #[doc = " Enable checksum reports in response to DECRQCRA (CSI Pi ; Pg ; Pt ; Pl ;\n Pb ; Pr * y).\n\n This is disabled by default because a running program can checksum the\n screen one cell at a time and so read back everything on it, including\n output from other programs. Passing NULL or a pointer to false disables\n checksum reporting.\n\n While this is disabled, XTCHECKSUM (CSI Ps # y), which changes how the\n checksum is calculated, is ignored as well.\n\n Input type: bool*"]
+    pub const XT_CHECKSUM_REPORT: Type = 44;
+    #[doc = " Set how the DECRQCRA checksum is calculated after a reset (RIS or DECSTR).\n This also changes the current calculation.\n\n The value holds the same bits as XTCHECKSUM (CSI Ps # y) and xterm's\n checksumExtension resource, which a running program can still use to\n change the calculation until the next reset:\n\n   - 1: don't negate the result\n   - 2: don't add the video attributes of each cell\n   - 4: don't omit blanks\n   - 8: count cells that were never written to as spaces\n   - 16: use full codepoints instead of the DEC 8-bit values\n\n Zero, or passing NULL, is the calculation of a real DEC terminal.\n Values above 31 return GHOSTTY_INVALID_VALUE.\n\n Input type: uint8_t*"]
+    pub const XT_CHECKSUM_EXTENSION: Type = 45;
+    #[doc = " Callback invoked when the running program sends a program status\n report via OSC 7501. Set to NULL to ignore these reports.\n\n Programs check for support before sending reports by sending\n `OSC 7501 ; ?`. While this callback is set, the terminal answers that\n query through GHOSTTY_TERMINAL_OPT_WRITE_PTY. While it is NULL, the\n query gets no reply, so programs know the protocol isn't supported.\n Set a write_pty callback too, or programs never see the reply.\n\n Input type: GhosttyTerminalProgramStatusFn"]
+    pub const PROGRAM_STATUS: Type = 46;
+    #[doc = " Callback invoked when the running program changes Kitty drag and\n drop protocol (OSC 72) state in a way the embedder may need to act\n on. Setting it enables the protocol; while it is NULL, OSC 72 is\n ignored. See @ref kitty_dnd.\n\n Input type: GhosttyTerminalKittyDndFn"]
+    pub const KITTY_DND: Type = 47;
+    #[doc = " Callback invoked when the running program changes Kitty drag and\n drop protocol (OSC 72) state in a way the embedder may need to act\n on. Setting it enables the protocol; while it is NULL, OSC 72 is\n ignored. See @ref kitty_dnd.\n\n Input type: GhosttyTerminalKittyDndFn"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod TerminalData {
@@ -3374,7 +3914,13 @@ pub mod TerminalData {
     pub const MOUSE_SHAPE: Type = 41;
     #[doc = " How much memory the terminal holds. See GhosttyTerminalMemoryUsage\n for what each field means.\n\n Set the struct's `size` field before the call, for example with\n GHOSTTY_INIT_SIZED(). If `size` is too small, this returns\n GHOSTTY_INVALID_VALUE and leaves the struct unchanged.\n\n This never decompresses scrollback, but it does look at every page, so\n avoid reading it after every write.\n\n Output type: GhosttyTerminalMemoryUsage *"]
     pub const MEMORY_USAGE: Type = 42;
-    #[doc = " How much memory the terminal holds. See GhosttyTerminalMemoryUsage\n for what each field means.\n\n Set the struct's `size` field before the call, for example with\n GHOSTTY_INIT_SIZED(). If `size` is too small, this returns\n GHOSTTY_INVALID_VALUE and leaves the struct unchanged.\n\n This never decompresses scrollback, but it does look at every page, so\n avoid reading it after every write.\n\n Output type: GhosttyTerminalMemoryUsage *"]
+    #[doc = " Which part of its prompt the shell redraws after a resize, as the last\n OSC 133;A with a `redraw` option said.\n\n Initially GHOSTTY_TERMINAL_PROMPT_REDRAW_NONE, and again after a full\n reset.\n\n Output type: GhosttyTerminalPromptRedraw *"]
+    pub const PROMPT_REDRAW: Type = 43;
+    #[doc = " The semantic content type (OSC 133) the cursor writes cells with:\n output, input or prompt.\n\n Output type: GhosttyCellSemanticContent *"]
+    pub const CURSOR_SEMANTIC_CONTENT: Type = 44;
+    #[doc = " Whether the cursor's input content ends at the end of the line\n (OSC 133;I), so the next newline returns it to output.\n\n Output type: bool *"]
+    pub const CURSOR_SEMANTIC_CLEAR_EOL: Type = 45;
+    #[doc = " Whether the cursor's input content ends at the end of the line\n (OSC 133;I), so the next newline returns it to output.\n\n Output type: bool *"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 unsafe extern "C" {
@@ -3515,7 +4061,7 @@ unsafe extern "C" {
 pub struct FormatterScreenExtra {
     #[doc = " Size of this struct in bytes. Must be set to sizeof(GhosttyFormatterScreenExtra)."]
     pub size: usize,
-    #[doc = " Emit cursor position using CUP (CSI H)."]
+    #[doc = " Emit cursor position using CUP (CSI H), relative to the margins under\n origin mode. From a terminal formatter, also the cursor's shape\n (DECSCUSR) when a program set one, and the state DECSC saved, saved\n again with DECSC."]
     pub cursor: bool,
     #[doc = " Emit current SGR style state based on the cursor's active style_id."]
     pub style: bool,
@@ -3523,7 +4069,7 @@ pub struct FormatterScreenExtra {
     pub hyperlink: bool,
     #[doc = " Emit character protection mode using DECSCA."]
     pub protection: bool,
-    #[doc = " Emit Kitty keyboard protocol state using CSI > u and CSI = sequences."]
+    #[doc = " Emit the Kitty keyboard protocol flag stack using CSI = u and CSI > u sequences."]
     pub kitty_keyboard: bool,
     #[doc = " Emit character set designations and invocations."]
     pub charsets: bool,
@@ -3606,11 +4152,15 @@ pub struct FormatterTerminalOptions {
     pub extra: FormatterTerminalExtra,
     #[doc = " Optional selection to restrict output to a range.\n  If NULL, the entire screen is formatted."]
     pub selection: *const Selection,
+    #[doc = " For VT, emit every row's prompt flag and every cell's semantic\n  content (OSC 133), so a replay into a fresh terminal restores them.\n  Rows with no text but a prompt flag are emitted too."]
+    pub semantic_prompt: bool,
+    #[doc = " For VT, end with the blank rows after the last one with text, as\n  newlines, so a replay into a fresh terminal of the same size has\n  every row that was formatted."]
+    pub trailing_rows: bool,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of FormatterTerminalOptions"]
-        [::std::mem::size_of::<FormatterTerminalOptions>() - 56usize];
+        [::std::mem::size_of::<FormatterTerminalOptions>() - 64usize];
     ["Alignment of FormatterTerminalOptions"]
         [::std::mem::align_of::<FormatterTerminalOptions>() - 8usize];
     ["Offset of field: FormatterTerminalOptions::size"]
@@ -3625,6 +4175,10 @@ const _: () = {
         [::std::mem::offset_of!(FormatterTerminalOptions, extra) - 16usize];
     ["Offset of field: FormatterTerminalOptions::selection"]
         [::std::mem::offset_of!(FormatterTerminalOptions, selection) - 48usize];
+    ["Offset of field: FormatterTerminalOptions::semantic_prompt"]
+        [::std::mem::offset_of!(FormatterTerminalOptions, semantic_prompt) - 56usize];
+    ["Offset of field: FormatterTerminalOptions::trailing_rows"]
+        [::std::mem::offset_of!(FormatterTerminalOptions, trailing_rows) - 57usize];
 };
 impl Default for FormatterTerminalOptions {
     fn default() -> Self {
@@ -3714,6 +4268,34 @@ const _: () = {
     ["Offset of field: RenderStateOverscan::below"]
         [::std::mem::offset_of!(RenderStateOverscan, below) - 2usize];
 };
+#[doc = " A borrowed view of the per-row dirty flags of a render state.\n\n One flag per row the last update captured, in the order the row\n iterator visits them: `ptr[i]` is the flag of the row the iterator\n reports at position `i`. The memory is owned by the render state and\n is the same memory GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY reads and\n GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY and ghostty_render_state_clean()\n write, so it always shows the current flags. It is only valid as long\n as the render state is not updated.\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct RenderStateRowDirtyView {
+    #[doc = " Pointer to len contiguous row dirty flags."]
+    pub ptr: *const bool,
+    #[doc = " Number of rows."]
+    pub len: usize,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of RenderStateRowDirtyView"][::std::mem::size_of::<RenderStateRowDirtyView>() - 16usize];
+    ["Alignment of RenderStateRowDirtyView"]
+        [::std::mem::align_of::<RenderStateRowDirtyView>() - 8usize];
+    ["Offset of field: RenderStateRowDirtyView::ptr"]
+        [::std::mem::offset_of!(RenderStateRowDirtyView, ptr) - 0usize];
+    ["Offset of field: RenderStateRowDirtyView::len"]
+        [::std::mem::offset_of!(RenderStateRowDirtyView, len) - 8usize];
+};
+impl Default for RenderStateRowDirtyView {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
 #[doc = " The identity of a row across render state updates.\n\n Treat this value as opaque. Two ids are the same when both words are\n equal. No other comparison or interpretation is meaningful, and the\n contents may change between library versions. A zero-initialized id is\n never valid, so it can be used to mean \"no row\".\n\n bool same = a.bits[0] == b.bits[0] && a.bits[1] == b.bits[1];\n\n See \"Row Identity\" in the render state overview for how to use ids.\n"]
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -3775,7 +4357,9 @@ pub mod RenderStateData {
     pub const OVERSCAN: Type = 20;
     #[doc = " The overscan request most recently set with\n  GHOSTTY_RENDER_STATE_OPTION_OVERSCAN (GhosttyRenderStateOverscan).\n  The next update uses this request. Both sides are zero if it was\n  never set."]
     pub const OVERSCAN_REQUEST: Type = 21;
-    #[doc = " The overscan request most recently set with\n  GHOSTTY_RENDER_STATE_OPTION_OVERSCAN (GhosttyRenderStateOverscan).\n  The next update uses this request. Both sides are zero if it was\n  never set."]
+    #[doc = " A borrowed view of every captured row's dirty flag\n  (GhosttyRenderStateRowDirtyView), the bulk alternative to reading\n  GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY row by row. It reads the flags in\n  place, so one call serves a whole frame. The flags matter only while\n  GHOSTTY_RENDER_STATE_DATA_DIRTY is GHOSTTY_RENDER_STATE_DIRTY_PARTIAL:\n  a full redraw covers every row and a clean state none, whatever the\n  flags say, as with ghostty_render_state_row_iterator_next_dirty().\n  The view is only valid as long as the render state is not updated;\n  it is unsafe to use after updating the render state."]
+    pub const ROW_DIRTY: Type = 22;
+    #[doc = " A borrowed view of every captured row's dirty flag\n  (GhosttyRenderStateRowDirtyView), the bulk alternative to reading\n  GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY row by row. It reads the flags in\n  place, so one call serves a whole frame. The flags matter only while\n  GHOSTTY_RENDER_STATE_DATA_DIRTY is GHOSTTY_RENDER_STATE_DIRTY_PARTIAL:\n  a full redraw covers every row and a clean state none, whatever the\n  flags say, as with ghostty_render_state_row_iterator_next_dirty().\n  The view is only valid as long as the render state is not updated;\n  it is unsafe to use after updating the render state."]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod RenderStateOption {
@@ -4340,7 +4924,7 @@ unsafe extern "C" {
     #[doc = " Get the value from an SGR attribute.\n\n This function returns a pointer to the value union from an SGR attribute. Use\n the tag to determine which field of the union is valid. Primarily useful in\n WebAssembly environments where accessing struct fields directly is difficult.\n\n"]
     pub fn ghostty_sgr_attribute_value(attr: *mut SgrAttribute) -> *mut SgrAttributeValue;
 }
-#[doc = " Result of decoding an image.\n\n The `data` buffer must be allocated through the allocator provided to\n the decode callback. The library takes ownership and will free it\n with the same allocator."]
+#[doc = " A decoded image, filled in by a decode callback such as\n GhosttySysDecodePngFn.\n\n Pixels are 8-bit RGBA: four bytes per pixel, stored row by row starting\n at the top-left corner, with no padding between rows. A complete image\n is therefore `width * height * 4` bytes long.\n\n The pixel buffer must be allocated with the allocator passed to the\n decode callback. When the callback returns true, the library takes\n ownership of the buffer and frees it with that same allocator."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct SysImage {
@@ -4348,9 +4932,9 @@ pub struct SysImage {
     pub width: u32,
     #[doc = " Image height in pixels."]
     pub height: u32,
-    #[doc = " Pointer to the decoded RGBA pixel data."]
+    #[doc = " The decoded RGBA pixels, allocated with the allocator passed to\n the decode callback."]
     pub data: *mut u8,
-    #[doc = " Length of the pixel data in bytes."]
+    #[doc = " Length of `data` in bytes. This must be the exact size that was\n requested from the allocator, because the library uses it to free\n the buffer."]
     pub data_len: usize,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
@@ -4391,7 +4975,7 @@ pub type SysLogFn = ::std::option::Option<
         message_len: usize,
     ),
 >;
-#[doc = " Callback type for PNG decoding.\n\n Decodes raw PNG data into RGBA pixels. The output pixel data must be\n allocated through the provided allocator. The library takes ownership\n of the buffer and will free it with the same allocator.\n"]
+#[doc = " Callback type for PNG decoding.\n\n The library calls this when it receives a PNG image and needs the raw\n pixels. The callback decodes the PNG bytes in @p data and describes\n the result in @p out. See the example in the @ref sys overview for a\n complete callback.\n\n ### On success\n\n Allocate the pixel buffer with ghostty_alloc() and @p allocator, write\n the decoded pixels into it, set all four fields of @p out, and return\n true. The library then owns the buffer and frees it with the same\n allocator. See GhosttySysImage for the expected pixel layout.\n\n The allocator limits how much memory a single image may use, so\n ghostty_alloc() can return NULL for very large images. Treat that as\n a failure.\n\n ### On failure\n\n Free anything that was allocated and return false. The library does\n not read @p out in this case, and the image is rejected.\n\n ### The output struct starts zeroed\n\n The library sets every field of @p out to zero before it calls the\n callback. This has two practical effects:\n\n - If the callback returns true but `data` is still NULL, the library\n   treats the call as a failure.\n - Language bindings can store a pointer into @p out directly. Some\n   runtimes, such as Go, require memory to be initialized before a\n   pointer is written into it, and this guarantee satisfies that\n   requirement.\n\n Only @p out is zeroed. Memory returned by ghostty_alloc() is not.\n\n callback.\n\n                  call, and filled in by the callback on success.\n         false on failure"]
 pub type SysDecodePngFn = ::std::option::Option<
     unsafe extern "C" fn(
         userdata: *mut ::std::os::raw::c_void,

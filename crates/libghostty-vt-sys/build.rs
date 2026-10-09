@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Pinned ghostty commit. Update this to pull a newer version.
-const GHOSTTY_REPO: &str = "https://github.com/ghostty-org/ghostty.git";
-const GHOSTTY_COMMIT: &str = "3425025e585a3403340d4dc6d65132f42e05e605";
+const GHOSTTY_REPO: &str = "https://github.com/aislopware/ghostty.git";
+const GHOSTTY_COMMIT: &str = "95b7cc6f9fe571434ab88ba5c2ff02a44e3fa0e7";
 
 /// File name of the static archive on Windows. Ghostty installs it under this
 /// name for every Windows ABI so it does not collide with `ghostty-vt.lib`,
