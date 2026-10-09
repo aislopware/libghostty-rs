@@ -19,7 +19,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     ghostty = {
-      url = "github:ghostty-org/ghostty/521cf2c5d30bd48028ca61546c64e7913764073d";
+      url = "github:aislopware/ghostty/95b7cc6f9fe571434ab88ba5c2ff02a44e3fa0e7";
     };
   };
 
@@ -79,14 +79,7 @@
         craneCheckLib = (crane.mkLib pkgs).overrideToolchain checkToolchain;
         unfilteredRoot = ./.;
 
-        # Ghostty patches Zig 0.17 so cross-compiling C sources for iOS does
-        # not instantiate process spawning code iOS lacks. Take the patch from
-        # the pinned ghostty input so it tracks the version we build against.
-        zigPkg = zig.packages.${system}."0.17.0".overrideAttrs (previousAttrs: {
-          patches =
-            (previousAttrs.patches or [])
-            ++ ["${ghostty}/nix/patches/zig-0.17-ios-process-replace.patch"];
-        });
+        zigPkg = zig.packages.${system}."0.16.0";
         ghosttyLib = ghostty.packages.${system}.libghostty-vt;
 
         miriCommand = pkgs.writeShellApplication {
@@ -96,10 +89,8 @@
             cargo miri test --locked -p libghostty-vt-sys --lib
             cargo miri test --locked -p libghostty-vt --lib alloc::tests::
             # Issue #74 soundness regression tests (both clipboard findings
-            # live in this module), plus tests that need the mock C API to
-            # produce shapes real libghostty can't yet. Miri aborts the test
-            # process at the first UB it finds, so a broken tree reports only
-            # the first failing test.
+            # live in this module). Miri aborts the test process at the first
+            # UB it finds, so a broken tree reports only the first failing test.
             cargo miri test --locked -p libghostty-vt --lib miri_soundness
           '';
         };
