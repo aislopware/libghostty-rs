@@ -1953,7 +1953,9 @@ impl MemoryUsage {
     /// Physical memory both screens' pages use, the figure to budget against.
     #[must_use]
     pub const fn resident_bytes(&self) -> u64 {
-        self.primary.resident_bytes.saturating_add(self.alternate.resident_bytes)
+        self.primary
+            .resident_bytes
+            .saturating_add(self.alternate.resident_bytes)
     }
 }
 
@@ -2255,7 +2257,6 @@ impl<'t> ClipboardRead<'t> {
     ///
     /// The values come straight from the program, so they are exposed as
     /// raw bytes.
-    #[must_use]
     pub fn mimes(&self) -> impl ExactSizeIterator<Item = &'t [u8]> + use<'t> {
         // SAFETY: The request lives for the callback duration.
         let (ptr, len) = unsafe {
@@ -4348,7 +4349,7 @@ mod tests {
         // Exceeding the limit fails the transaction and never reaches the callback.
         let (output, written) = run(4);
         assert_eq!(output, b"\x1b]5522;type=write:status=EFBIG:id=c1\x1b\\");
-        assert!(written.is_empty());
+        assert_eq!(written, Vec::<Vec<u8>>::new());
 
         let (output, written) = run(5);
         assert_eq!(output, b"\x1b]5522;type=write:status=DONE:id=c1\x1b\\");
@@ -5800,7 +5801,7 @@ mod tests {
         let write = unsafe { ClipboardWrite::from_raw(&raw const raw) };
         assert_eq!(write.location(), ClipboardLocation::Primary);
         assert_eq!(write.contents().next().unwrap().data, b"hi");
-        assert!(write.name().is_empty());
+        assert_eq!(write.name(), b"");
         assert!(!write.granted());
         assert!(!write.can_remember());
         write.reply(Ok(()), false);
@@ -5832,7 +5833,7 @@ mod tests {
         let read = unsafe { ClipboardRead::from_raw(&raw const raw) };
         assert_eq!(read.location(), ClipboardLocation::Selection);
         assert_eq!(read.mimes().collect::<Vec<_>>(), [b"text/plain"]);
-        assert!(read.name().is_empty());
+        assert_eq!(read.name(), b"");
         assert!(!read.granted());
         assert!(!read.can_remember());
         read.reply(Ok(&[]), &[], false);
