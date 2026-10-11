@@ -2759,7 +2759,9 @@ pub mod TerminalScrollViewportTag {
     pub const DELTA: Type = 2;
     #[doc = " Scroll to an absolute row offset from the top of the scrollable\n area. Row 0 is the top of the scrollback and the requested row\n becomes the first visible row of the viewport. The value is\n clamped so the viewport never scrolls beyond the top of the\n active area. If the terminal has no scrollback (e.g. the\n alternate screen is active), the viewport always remains on the\n active area.\n\n This is the same row space as the offset field of\n GhosttyTerminalScrollbar, so a scrollbar position obtained from\n GHOSTTY_TERMINAL_DATA_SCROLLBAR round-trips cleanly."]
     pub const ROW: Type = 3;
-    #[doc = " Scroll to an absolute row offset from the top of the scrollable\n area. Row 0 is the top of the scrollback and the requested row\n becomes the first visible row of the viewport. The value is\n clamped so the viewport never scrolls beyond the top of the\n active area. If the terminal has no scrollback (e.g. the\n alternate screen is active), the viewport always remains on the\n active area.\n\n This is the same row space as the offset field of\n GhosttyTerminalScrollbar, so a scrollbar position obtained from\n GHOSTTY_TERMINAL_DATA_SCROLLBAR round-trips cleanly."]
+    #[doc = " Scroll by a number of prompts relative to the viewport top. Negative\n values move backward and positive values move forward. Requires semantic\n prompt markers from the shell. Zero or no matching prompt is a no-op.\n If fewer prompts remain than requested, move to the last matching prompt,\n clamped to the active area.\n\n Moving forward through a final prompt continuation can snap to the active\n area even when there is no newer prompt."]
+    pub const DELTA_PROMPT: Type = 4;
+    #[doc = " Scroll by a number of prompts relative to the viewport top. Negative\n values move backward and positive values move forward. Requires semantic\n prompt markers from the shell. Zero or no matching prompt is a no-op.\n If fewer prompts remain than requested, move to the last matching prompt,\n clamped to the active area.\n\n Moving forward through a final prompt continuation can snap to the active\n area even when there is no newer prompt."]
     pub const MAX_VALUE: Type = 2147483647;
 }
 #[doc = " Scroll viewport value.\n"]
@@ -2770,6 +2772,8 @@ pub union TerminalScrollViewportValue {
     pub delta: isize,
     #[doc = " Absolute row offset (only used with GHOSTTY_SCROLL_VIEWPORT_ROW)."]
     pub row: usize,
+    #[doc = " Prompt delta (only used with GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT)."]
+    pub delta_prompt: isize,
     #[doc = " Padding for ABI compatibility. Do not use."]
     pub _padding: [u64; 2usize],
 }
@@ -2783,6 +2787,8 @@ const _: () = {
         [::std::mem::offset_of!(TerminalScrollViewportValue, delta) - 0usize];
     ["Offset of field: TerminalScrollViewportValue::row"]
         [::std::mem::offset_of!(TerminalScrollViewportValue, row) - 0usize];
+    ["Offset of field: TerminalScrollViewportValue::delta_prompt"]
+        [::std::mem::offset_of!(TerminalScrollViewportValue, delta_prompt) - 0usize];
     ["Offset of field: TerminalScrollViewportValue::_padding"]
         [::std::mem::offset_of!(TerminalScrollViewportValue, _padding) - 0usize];
 };
@@ -3994,7 +4000,7 @@ unsafe extern "C" {
     ) -> Result::Type;
 }
 unsafe extern "C" {
-    #[doc = " Scroll the terminal viewport.\n\n Scrolls the terminal's viewport according to the given behavior.\n When using GHOSTTY_SCROLL_VIEWPORT_DELTA, set the delta field in\n the value union to specify the number of rows to scroll (negative\n for up, positive for down). When using GHOSTTY_SCROLL_VIEWPORT_ROW,\n set the row field to the absolute row offset from the top of the\n scrollable area (the same row space as the offset field of\n GhosttyTerminalScrollbar). For other behaviors, the value is ignored.\n\n"]
+    #[doc = " Scroll the terminal viewport.\n\n Scrolls the terminal's viewport according to the given behavior.\n When using GHOSTTY_SCROLL_VIEWPORT_DELTA, set the delta field in\n the value union to specify the number of rows to scroll (negative\n for up, positive for down). When using GHOSTTY_SCROLL_VIEWPORT_ROW,\n set the row field to the absolute row offset from the top of the\n scrollable area (the same row space as the offset field of\n GhosttyTerminalScrollbar). When using\n GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT, set delta_prompt to the signed\n number of prompts to move. See GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT for\n the navigation behavior. For other behaviors, the value is ignored.\n\n"]
     pub fn ghostty_terminal_scroll_viewport(terminal: Terminal, behavior: TerminalScrollViewport);
 }
 unsafe extern "C" {
