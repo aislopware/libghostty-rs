@@ -1968,7 +1968,9 @@ pub mod SizeReportStyle {
     pub const CSI_16_T: Type = 2;
     #[doc = " XTWINOPS text area size in characters: ESC [ 8 ; rows ; cols t"]
     pub const CSI_18_T: Type = 3;
-    #[doc = " XTWINOPS text area size in characters: ESC [ 8 ; rows ; cols t"]
+    #[doc = " XTWINOPS screen size in characters: ESC [ 9 ; rows ; cols t\n\n  The physical screen size is not known, so this reports the text\n  area size in characters, the same as CSI 18 t."]
+    pub const CSI_19_T: Type = 4;
+    #[doc = " XTWINOPS screen size in characters: ESC [ 9 ; rows ; cols t\n\n  The physical screen size is not known, so this reports the text\n  area size in characters, the same as CSI 18 t."]
     pub const STYLE_MAX_VALUE: Type = 2147483647;
 }
 #[doc = " Terminal size information for encoding size reports."]
@@ -3658,6 +3660,96 @@ pub type TerminalSemanticPromptFn = ::std::option::Option<
 pub type TerminalResetFn = ::std::option::Option<
     unsafe extern "C" fn(terminal: Terminal, userdata: *mut ::std::os::raw::c_void),
 >;
+pub mod TerminalResizeWindowTag {
+    #[doc = " The kind of window resize request passed to a\n GhosttyTerminalResizeWindowFn callback.\n\n New kinds may be added in later versions. Callbacks should ignore any\n tag they don't handle.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Resize the window's text area to a size in rows and columns\n (CSI 8 ; rows ; columns t). The value is in `value.grid`."]
+    pub const GHOSTTY_TERMINAL_RESIZE_WINDOW_GRID: Type = 0;
+    #[doc = " Resize the window's text area to a size in rows and columns\n (CSI 8 ; rows ; columns t). The value is in `value.grid`."]
+    pub const GHOSTTY_TERMINAL_RESIZE_WINDOW_MAX_VALUE: Type = 2147483647;
+}
+#[doc = " A request to resize the window's text area to a size in rows and columns.\n"]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct TerminalResizeWindowGrid {
+    #[doc = " Requested height in rows, or 0 to keep the current height."]
+    pub rows: u16,
+    #[doc = " Requested width in columns, or 0 to keep the current width."]
+    pub columns: u16,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalResizeWindowGrid"]
+        [::std::mem::size_of::<TerminalResizeWindowGrid>() - 4usize];
+    ["Alignment of TerminalResizeWindowGrid"]
+        [::std::mem::align_of::<TerminalResizeWindowGrid>() - 2usize];
+    ["Offset of field: TerminalResizeWindowGrid::rows"]
+        [::std::mem::offset_of!(TerminalResizeWindowGrid, rows) - 0usize];
+    ["Offset of field: TerminalResizeWindowGrid::columns"]
+        [::std::mem::offset_of!(TerminalResizeWindowGrid, columns) - 2usize];
+};
+#[doc = " Window resize request value.\n"]
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union TerminalResizeWindowValue {
+    #[doc = " Size in rows and columns (GHOSTTY_TERMINAL_RESIZE_WINDOW_GRID)."]
+    pub grid: TerminalResizeWindowGrid,
+    #[doc = " Padding for ABI compatibility. Do not use."]
+    pub _padding: [u64; 2usize],
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalResizeWindowValue"]
+        [::std::mem::size_of::<TerminalResizeWindowValue>() - 16usize];
+    ["Alignment of TerminalResizeWindowValue"]
+        [::std::mem::align_of::<TerminalResizeWindowValue>() - 8usize];
+    ["Offset of field: TerminalResizeWindowValue::grid"]
+        [::std::mem::offset_of!(TerminalResizeWindowValue, grid) - 0usize];
+    ["Offset of field: TerminalResizeWindowValue::_padding"]
+        [::std::mem::offset_of!(TerminalResizeWindowValue, _padding) - 0usize];
+};
+impl Default for TerminalResizeWindowValue {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " A request from the running program to resize the window.\n"]
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TerminalResizeWindow {
+    pub tag: TerminalResizeWindowTag::Type,
+    pub value: TerminalResizeWindowValue,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalResizeWindow"][::std::mem::size_of::<TerminalResizeWindow>() - 24usize];
+    ["Alignment of TerminalResizeWindow"][::std::mem::align_of::<TerminalResizeWindow>() - 8usize];
+    ["Offset of field: TerminalResizeWindow::tag"]
+        [::std::mem::offset_of!(TerminalResizeWindow, tag) - 0usize];
+    ["Offset of field: TerminalResizeWindow::value"]
+        [::std::mem::offset_of!(TerminalResizeWindow, value) - 8usize];
+};
+impl Default for TerminalResizeWindow {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Callback function type for window resize requests.\n\n Called synchronously when the running program asks to resize the window,\n such as with CSI 8 ; rows ; columns t. Check `request->tag` first, because\n more kinds of requests may be reported in later versions. The terminal is\n not resized by this: the embedder decides whether to allow the request,\n and if so resizes its window and the terminal. Letting any\n program resize the window is a nuisance at best, so consider making this\n opt-in for users.\n\n"]
+pub type TerminalResizeWindowFn = ::std::option::Option<
+    unsafe extern "C" fn(
+        terminal: Terminal,
+        userdata: *mut ::std::os::raw::c_void,
+        request: *const TerminalResizeWindow,
+    ),
+>;
 #[doc = " Callback function type for color scheme queries (CSI ? 996 n).\n\n Called when the terminal receives a color scheme device status report\n query. Return true and fill *out_scheme with the current color scheme,\n or return false to silently ignore the query.\n\n"]
 pub type TerminalColorSchemeFn = ::std::option::Option<
     unsafe extern "C" fn(
@@ -3678,7 +3770,7 @@ pub type TerminalDeviceAttributesFn = ::std::option::Option<
 pub type TerminalEnquiryFn = ::std::option::Option<
     unsafe extern "C" fn(terminal: Terminal, userdata: *mut ::std::os::raw::c_void) -> String,
 >;
-#[doc = " Callback function type for terminal size reports.\n\n Called in response to XTWINOPS size queries (CSI 14/16/18 t) and when VT\n input enables in-band size reports (mode 2048).\n Return true and fill *out_size with the current terminal geometry,\n or return false to suppress the report.\n\n mode 2048 report\n"]
+#[doc = " Callback function type for terminal size reports.\n\n Called in response to XTWINOPS size queries (CSI 14/16/18/19 t) and when VT\n input enables in-band size reports (mode 2048).\n Return true and fill *out_size with the current terminal geometry,\n or return false to suppress the report.\n\n mode 2048 report\n"]
 pub type TerminalSizeFn = ::std::option::Option<
     unsafe extern "C" fn(
         terminal: Terminal,
@@ -3744,7 +3836,7 @@ pub mod TerminalOption {
     pub const XTVERSION: Type = 4;
     #[doc = " Callback invoked when the terminal title changes via escape\n sequences (e.g. OSC 0 or OSC 2). Set to NULL to ignore title\n change events.\n\n Input type: GhosttyTerminalTitleChangedFn"]
     pub const TITLE_CHANGED: Type = 5;
-    #[doc = " Callback invoked in response to XTWINOPS size queries\n (CSI 14/16/18 t). Set to NULL to silently ignore size queries.\n\n Input type: GhosttyTerminalSizeFn"]
+    #[doc = " Callback invoked in response to XTWINOPS size queries\n (CSI 14/16/18/19 t). Set to NULL to silently ignore size queries.\n\n Input type: GhosttyTerminalSizeFn"]
     pub const SIZE: Type = 6;
     #[doc = " Callback invoked in response to a color scheme device status\n report query (CSI ? 996 n). Return true and fill the out pointer\n to report the current scheme, or return false to silently ignore.\n Set to NULL to ignore color scheme queries.\n\n Input type: GhosttyTerminalColorSchemeFn"]
     pub const COLOR_SCHEME: Type = 7;
@@ -3826,8 +3918,10 @@ pub mod TerminalOption {
     pub const XT_CHECKSUM_EXTENSION: Type = 45;
     #[doc = " Callback invoked when the running program sends a program status\n report via OSC 7501. Set to NULL to ignore these reports.\n\n Programs may ask whether the terminal supports the protocol by\n sending `OSC 7501 ; ?`. While this callback is set, the terminal\n answers through GHOSTTY_TERMINAL_OPT_WRITE_PTY with `?` followed by\n the states and kinds it accepts:\n\n program:  ESC ] 7501 ; ? ST\n terminal: ESC ] 7501 ; ?:states=idle,working,done,blocked,error:kinds=permission,question,auth ST\n\n While this callback is NULL, the query gets no reply, so a program\n that asks sees the protocol as unsupported. Asking is optional, so\n programs may send reports anyway. Those are dropped. Set a write_pty\n callback too, or programs never see the reply.\n\n Input type: GhosttyTerminalProgramStatusFn"]
     pub const PROGRAM_STATUS: Type = 46;
+    #[doc = " Callback invoked when the running program asks to resize the window,\n such as with CSI 8 ; rows ; columns t. Set to NULL to ignore resize\n requests.\n\n Input type: GhosttyTerminalResizeWindowFn"]
+    pub const RESIZE_WINDOW: Type = 47;
     #[doc = " Callback invoked when the running program changes Kitty drag and\n drop protocol (OSC 72) state in a way the embedder may need to act\n on. Setting it enables the protocol; while it is NULL, OSC 72 is\n ignored. See @ref kitty_dnd.\n\n Input type: GhosttyTerminalKittyDndFn"]
-    pub const KITTY_DND: Type = 47;
+    pub const KITTY_DND: Type = 48;
     #[doc = " Callback invoked when the running program changes Kitty drag and\n drop protocol (OSC 72) state in a way the embedder may need to act\n on. Setting it enables the protocol; while it is NULL, OSC 72 is\n ignored. See @ref kitty_dnd.\n\n Input type: GhosttyTerminalKittyDndFn"]
     pub const MAX_VALUE: Type = 2147483647;
 }
