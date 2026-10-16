@@ -212,7 +212,7 @@ impl<'p> Command<'p, '_> {
             Type::KITTY_TEXT_SIZING => CommandType::KittyTextSizing,
             Type::KITTY_CLIPBOARD_PROTOCOL => CommandType::KittyClipboardProtocol,
             Type::KITTY_DND_PROTOCOL => CommandType::KittyDndProtocol,
-            Type::CONTEXT_SIGNAL => CommandType::ContextSignal,
+            Type::HIERARCHICAL_CONTEXT => CommandType::HierarchicalContext,
             Type::KITTY_DESKTOP_NOTIFICATION => CommandType::KittyDesktopNotification,
             Type::UNKNOWN => {
                 let content = self.get::<ffi::String>(Data::UNKNOWN_CONTENT)?;
@@ -287,7 +287,7 @@ pub enum CommandType<'p> {
     KittyTextSizing,
     KittyClipboardProtocol,
     KittyDndProtocol,
-    ContextSignal,
+    HierarchicalContext,
     KittyDesktopNotification,
     /// An OSC sequence whose number the parser does not implement.
     ///
@@ -411,7 +411,7 @@ mod tests {
         let cases: [(&[u8], &str); 4] = [
             (b"5522;type=read;dGV4dC9wbGFpbg==", "KittyClipboardProtocol"),
             (b"72;t=a:i=5;text/plain text/uri-list", "KittyDndProtocol"),
-            (b"3008;start=abc123", "ContextSignal"),
+            (b"3008;start=abc123", "HierarchicalContext"),
             (b"99;;bobr", "KittyDesktopNotification"),
         ];
         for (osc, expected) in cases {
