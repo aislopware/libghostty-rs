@@ -64,6 +64,9 @@ impl<'t, 's> FormatterOptions<'t, 's> {
         self
     }
     /// Specify whether to trim trailing whitespace on non-blank lines.
+    /// Trailing blank lines are always trimmed, except in VT output without
+    /// trimming, which ends with them so a replay into a fresh terminal of
+    /// the same size has every row: a screen with history keeps it whole.
     #[must_use]
     pub fn with_trim(mut self, value: bool) -> Self {
         self.inner.trim = value;
@@ -75,14 +78,6 @@ impl<'t, 's> FormatterOptions<'t, 's> {
     #[must_use]
     pub fn with_semantic_prompt(mut self, value: bool) -> Self {
         self.inner.semantic_prompt = value;
-        self
-    }
-    /// Specify whether VT output ends with the blank rows after the last
-    /// one with text, so a replay into a fresh terminal of the same size
-    /// has every row: a screen with history keeps it whole.
-    #[must_use]
-    pub fn with_trailing_rows(mut self, value: bool) -> Self {
-        self.inner.trailing_rows = value;
         self
     }
     /// Specify the selection to restrict output to a range.
@@ -426,20 +421,20 @@ mod tests {
     }
 
     #[test]
-    fn vt_output_ends_with_the_trailing_rows_when_asked() {
+    fn vt_output_without_trim_ends_with_the_trailing_rows() {
         let mut terminal = Terminal::new(10, 4).unwrap();
         terminal.vt_write(b"top\r\n\r\n");
-        let vt = |trailing| {
+        let vt = |trim| {
             let options = FormatterOptions::new()
                 .with_format(Format::Vt)
-                .with_trailing_rows(trailing);
+                .with_trim(trim);
             format_buf(&mut Formatter::new(&terminal, options).unwrap())
         };
         assert!(
-            vt(true).ends_with(b"top\r\n\r\n\r\n"),
+            vt(false).ends_with(b"top\r\n\r\n\r\n"),
             "every row but the last ends"
         );
-        assert_eq!(vt(false), b"top", "left out unless asked");
+        assert_eq!(vt(true), b"top", "trimmed output leaves them out");
     }
 
     #[test]
