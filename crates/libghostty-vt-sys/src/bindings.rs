@@ -1436,7 +1436,7 @@ pub struct TerminalSelectionFormatOptions {
     pub emit: FormatterFormat::Type,
     #[doc = " Whether to unwrap soft-wrapped lines."]
     pub unwrap: bool,
-    #[doc = " Whether to trim trailing whitespace on non-blank lines."]
+    #[doc = " Whether to trim trailing whitespace on non-blank lines. Trailing blank\n lines are always trimmed, except in VT output without trimming, where\n they are kept as part of the layout."]
     pub trim: bool,
     #[doc = " Optional selection to format.\n\n If NULL, the terminal's current active selection is used. If the terminal\n has no active selection, formatting returns GHOSTTY_NO_VALUE.\n\n If non-NULL, the pointed-to selection must be a valid snapshot selection\n for this terminal and must obey GhosttySelection lifetime rules."]
     pub selection: *const Selection,
@@ -4246,7 +4246,7 @@ pub struct FormatterTerminalOptions {
     pub emit: FormatterFormat::Type,
     #[doc = " Whether to unwrap soft-wrapped lines."]
     pub unwrap: bool,
-    #[doc = " Whether to trim trailing whitespace on non-blank lines."]
+    #[doc = " Whether to trim trailing whitespace on non-blank lines. Trailing blank\n lines are always trimmed, except in VT output without trimming, where\n they are kept as part of the layout."]
     pub trim: bool,
     #[doc = " Extra terminal state to include in styled output."]
     pub extra: FormatterTerminalExtra,
@@ -4254,8 +4254,6 @@ pub struct FormatterTerminalOptions {
     pub selection: *const Selection,
     #[doc = " For VT, emit every row's prompt flag and every cell's semantic\n  content (OSC 133), so a replay into a fresh terminal restores them.\n  Rows with no text but a prompt flag are emitted too."]
     pub semantic_prompt: bool,
-    #[doc = " For VT, end with the blank rows after the last one with text, as\n  newlines, so a replay into a fresh terminal of the same size has\n  every row that was formatted."]
-    pub trailing_rows: bool,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
@@ -4277,8 +4275,6 @@ const _: () = {
         [::std::mem::offset_of!(FormatterTerminalOptions, selection) - 48usize];
     ["Offset of field: FormatterTerminalOptions::semantic_prompt"]
         [::std::mem::offset_of!(FormatterTerminalOptions, semantic_prompt) - 56usize];
-    ["Offset of field: FormatterTerminalOptions::trailing_rows"]
-        [::std::mem::offset_of!(FormatterTerminalOptions, trailing_rows) - 57usize];
 };
 impl Default for FormatterTerminalOptions {
     fn default() -> Self {
