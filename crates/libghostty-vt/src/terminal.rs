@@ -905,6 +905,15 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
             .try_into()
             .map_err(|_| Error::InvalidValue)
     }
+    /// Which part of its prompt the shell redraws after a resize, as the
+    /// last OSC 133;A with a `redraw` option said.
+    ///
+    /// Initially [`PromptRedraw::None`], and again after a full reset.
+    pub fn prompt_redraw(&self) -> Result<PromptRedraw> {
+        self.get::<ffi::TerminalPromptRedraw::Type>(Data::PROMPT_REDRAW)?
+            .try_into()
+            .map_err(|_| Error::InvalidValue)
+    }
     /// Get the current Kitty keyboard protocol flags.
     pub fn kitty_keyboard_flags(&self) -> Result<key::KittyKeyFlags> {
         self.get::<ffi::KittyKeyFlags>(Data::KITTY_KEYBOARD_FLAGS)
@@ -2542,6 +2551,21 @@ pub enum ProgressState {
     Pause = ffi::TerminalProgressState::PAUSE,
 }
 
+/// Which part of its prompt the shell redraws after a resize, and so which
+/// part the terminal clears before reflowing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum PromptRedraw {
+    /// The shell redraws nothing, so nothing is cleared.
+    None = ffi::TerminalPromptRedraw::NONE,
+    /// The shell redraws its whole prompt (`redraw=1`).
+    Full = ffi::TerminalPromptRedraw::FULL,
+    /// The shell redraws only the last row of its prompt (`redraw=last`,
+    /// bash).
+    Last = ffi::TerminalPromptRedraw::LAST,
+}
+
 /// A program status report (OSC 7501).
 ///
 /// The program status protocol lets a program tell the terminal what it is
@@ -3717,6 +3741,25 @@ handlers! {
         func(term, unsafe { SemanticPrompt::from_raw(event) });
     }
 
+    /// Call the given function after the running program fully resets the
+    /// terminal (RIS, `ESC c`), not for a soft reset (DECSTR) or
+    /// [`Self::reset`].
+    ///
+    /// The terminal has already reset itself: its screen, scrollback,
+    /// modes, title and working directory are cleared, and state the
+    /// embedder keeps about them, such as the running command, is stale.
+    /// [`Self::on_title_changed`] and [`Self::on_pwd_changed`] are not
+    /// called for the cleared title and directory. A progress report is
+    /// removed first, through [`Self::on_progress_report`].
+    pub fn on_reset(
+        &mut self,
+        tag = RESET,
+        from = TerminalResetFn(),
+        to = ResetFn(),
+    ) |term, func| {
+        func(term);
+    }
+
     /// Call the given function when the running program asks to resize the
     /// window, such as with CSI 8 ; rows ; columns t.
     ///
@@ -4841,6 +4884,37 @@ mod tests {
             .codepoint()
             .unwrap();
         assert_eq!(codepoint, 0xe9);
+    }
+
+    #[test]
+    fn reset_is_reported_for_a_full_reset_only() {
+        let seen = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new(80, 24).expect("terminal should initialize");
+        terminal
+            .on_reset(|term| seen.borrow_mut().push(term.cursor_x().unwrap_or(u16::MAX)))
+            .expect("callback should register");
+        terminal.vt_write(b"abc\x1b[!p");
+        terminal.reset();
+        assert!(
+            seen.borrow().is_empty(),
+            "DECSTR and Terminal::reset are not reported"
+        );
+        terminal.vt_write(b"abc\x1bcxy");
+        assert_eq!(terminal.cursor_x().unwrap(), 2);
+        drop(terminal);
+        assert_eq!(seen.into_inner(), [0], "reset before `xy` was printed");
+    }
+
+    #[test]
+    fn prompt_redraw_follows_the_shell_and_a_full_reset() {
+        let mut terminal = Terminal::new(80, 24).unwrap();
+        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::None);
+        terminal.vt_write(b"\x1b]133;A;redraw=1\x07");
+        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::Full);
+        terminal.vt_write(b"\x1b]133;A;redraw=last\x07");
+        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::Last);
+        terminal.vt_write(b"\x1bc");
+        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::None);
     }
 
     #[test]
