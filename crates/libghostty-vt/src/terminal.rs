@@ -281,6 +281,8 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     }
 
     unsafe fn new_inner(alloc: *const ffi::Allocator, cols: u16, rows: u16) -> Result<Self> {
+        #[cfg(feature = "kitty-graphics")]
+        crate::kitty::graphics::hook_png_decoder()?;
         let mut raw: ffi::Terminal = std::ptr::null_mut();
         let result = unsafe { ffi::ghostty_terminal_new(alloc, &raw mut raw, cols, rows) };
         from_result(result)?;

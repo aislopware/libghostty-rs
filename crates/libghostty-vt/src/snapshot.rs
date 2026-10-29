@@ -294,6 +294,8 @@ impl<'alloc, 'r> Decoder<'alloc, 'r> {
     /// argument or lifecycle error detected before the operation consumes
     /// input does not poison it.    
     pub fn decode<'cb>(self) -> Result<Terminal<'alloc, 'cb>> {
+        #[cfg(feature = "kitty-graphics")]
+        crate::kitty::graphics::hook_png_decoder()?;
         let mut raw: ffi::Terminal = std::ptr::null_mut();
         let result =
             unsafe { ffi::ghostty_snapshot_decoder_decode(self.inner.as_raw(), &raw mut raw) };
@@ -325,6 +327,8 @@ impl<'alloc, 'r> Decoder<'alloc, 'r> {
     /// argument or lifecycle error detected before the operation consumes
     /// input does not poison it.    
     pub fn ready<'cb>(self) -> Result<IncrementalDecoder<'alloc, 'r, 'cb>> {
+        #[cfg(feature = "kitty-graphics")]
+        crate::kitty::graphics::hook_png_decoder()?;
         let mut raw: ffi::Terminal = std::ptr::null_mut();
         let result =
             unsafe { ffi::ghostty_snapshot_decoder_ready(self.inner.as_raw(), &raw mut raw) };
