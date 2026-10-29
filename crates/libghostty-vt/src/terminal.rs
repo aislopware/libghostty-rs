@@ -5173,7 +5173,7 @@ mod tests {
                 message: b"Apply?".to_vec(),
             }]
         );
-        assert!(output.is_empty());
+        assert_eq!(output, Vec::<u8>::new());
     }
 
     #[test]
@@ -5241,8 +5241,8 @@ mod tests {
         // An unknown state and a bad id each discard the whole report.
         let (seen, output) =
             program_status(b"\x1b]7501;state=sleeping\x07\x1b]7501;state=idle:id=a//b\x07");
-        assert!(seen.is_empty());
-        assert!(output.is_empty());
+        assert_eq!(seen, Vec::<SeenStatus>::new());
+        assert_eq!(output, Vec::<u8>::new());
     }
 
     #[test]
@@ -5294,7 +5294,7 @@ mod tests {
         // The reply uses the same terminator as the query, and the query
         // itself is not a report.
         let (seen, output) = program_status(b"\x1b]7501;?\x1b\\\x1b]7501;?\x07");
-        assert!(seen.is_empty());
+        assert_eq!(seen, Vec::<SeenStatus>::new());
         assert_eq!(output, [REPLY, b"\x1b\\", REPLY, b"\x07"].concat());
 
         // Without the callback the query goes unanswered, so the program
@@ -5306,7 +5306,7 @@ mod tests {
             .unwrap();
         terminal.vt_write(b"\x1b]7501;?\x1b\\");
         drop(terminal);
-        assert!(output.into_inner().is_empty());
+        assert_eq!(output.into_inner(), Vec::<u8>::new());
     }
 
     /// What a semantic prompt callback observed about one event, copied out
