@@ -17,7 +17,7 @@
 //!
 //! Kitty graphics are off until you give the terminal a storage limit with
 //! [`Terminal::set_kitty_image_storage_limit`]. To accept PNG images, also
-//! install a PNG decoder with [`set_png_decoder`].
+//! install a PNG decoder with [`replace_png_decoder`].
 //!
 //! Get the storage handle with [`Terminal::kitty_graphics`]. The handle is
 //! borrowed from the terminal. It stays valid until the next call that
@@ -345,8 +345,7 @@
 //! }
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // SAFETY: No other thread uses libghostty yet.
-//!     unsafe { graphics::set_png_decoder(Some(Box::new(StubPngDecoder))) }?;
+//!     graphics::replace_png_decoder(Some(Box::new(StubPngDecoder)));
 //!
 //!     // Create a terminal with Kitty graphics enabled.
 //!     let mut terminal = Terminal::new(80, 24)?;
@@ -568,7 +567,7 @@ use std::{
     ffi::OsStr,
     mem::{ManuallyDrop, MaybeUninit},
     path::Path,
-    sync::{Mutex, PoisonError},
+    sync::{Mutex, OnceLock, PoisonError},
 };
 
 use crate::{
@@ -1446,61 +1445,19 @@ static DECODE_PNG: Mutex<Option<Box<dyn DecodePng>>> = Mutex::new(None);
 ///
 /// This is a process-global setting. It is simplest to set it once at
 /// startup, before using any terminal functionality that depends on it.
+/// [`replace_png_decoder`] sets it without `unsafe`, at any time.
 ///
 /// # Safety
 ///
 /// libghostty does not synchronize this setting, so this must not be called
 /// while any other thread may be inside a libghostty call.
 pub unsafe fn set_png_decoder(f: Option<Box<dyn DecodePng>>) -> Result<()> {
-    unsafe extern "C" fn callback(
-        _userdata: *mut std::ffi::c_void,
-        allocator: *const ffi::Allocator,
-        data: *const u8,
-        data_len: usize,
-        out: *mut ffi::SysImage,
-    ) -> bool {
-        // A panic while decoding aborts the process (we are inside an
-        // `extern "C"` callback), so the lock can't really be poisoned.
-        let mut decoder = DECODE_PNG.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(decoder) = decoder.as_deref_mut() else {
-            return false;
-        };
-        // SAFETY: We trust libghostty to return valid values.
-        let alloc = unsafe { Allocator::from_raw(allocator) };
-        let data = unsafe { std::slice::from_raw_parts(data, data_len) };
-
-        match decoder.decode_png(&alloc, data) {
-            // libghostty frees the buffer with the allocator it passed
-            // in, so a buffer from any other allocator would be freed
-            // with the wrong one. `DecodePng` is a safe trait and
-            // `Bytes::new` type-checks here, so reject such an image
-            // instead of trusting the decoder; dropping it frees the
-            // buffer with its own allocator.
-            Some(result) if result.data.allocator() != alloc.to_raw() => false,
-            Some(result) => {
-                // IMPORTANT: Do NOT run the Rust destructor here
-                // to avoid double-freeing the byte buffer.
-                let mut result = ManuallyDrop::new(result);
-                unsafe {
-                    *out = ffi::SysImage {
-                        width: result.width,
-                        height: result.height,
-                        data: result.data.as_mut_ptr(),
-                        data_len: result.data.len(),
-                    }
-                };
-                true
-            }
-            None => false,
-        }
-    }
-
     // Write out the matches here to coerce function items into function
     // pointers, and trait impls into boxed trait objects. Yes, this is
     // the simplest way to do so.
     let ptr: ffi::SysDecodePngFn = match f {
         None => None,
-        Some(_) => Some(callback),
+        Some(_) => Some(decode_png_hook),
     };
     // Keep the old decoder alive until function exit: its destructor may
     // process PNG input, so it must run after unlocking and updating the hook.
@@ -1513,6 +1470,91 @@ pub unsafe fn set_png_decoder(f: Option<Box<dyn DecodePng>>) -> Result<()> {
         ffi::SysOption::DECODE_PNG,
         ptr.map_or(std::ptr::null(), |p| p as *const std::ffi::c_void),
     )
+}
+
+/// Set the PNG decoder, safely: from any thread, at any time, and as often as
+/// you like.
+///
+/// The decoder lives behind this crate's lock, and libghostty's hook points
+/// at it from before the process's first terminal on, so replacing the
+/// decoder never writes the hook while a terminal could read it. That is what
+/// [`set_png_decoder`] can't promise, since it writes the hook itself.
+///
+/// With no decoder (`None`), a PNG image fails to decode and is rejected.
+/// With [`set_png_decoder`]`(None)`, the terminal turns PNG off and says the
+/// format isn't supported. [`set_png_decoder`] also takes the hook back:
+/// after it clears the hook, the decoder set here goes unused until a decoder
+/// is set there again.
+///
+/// The decoder this replaces is dropped after the lock is released, so its
+/// destructor may decode PNG input itself.
+pub fn replace_png_decoder(f: Option<Box<dyn DecodePng>>) {
+    let _old = std::mem::replace(
+        &mut *DECODE_PNG.lock().unwrap_or_else(PoisonError::into_inner),
+        f,
+    );
+}
+
+/// Point libghostty's PNG hook at this crate's decoder, once for the process
+/// and before any terminal exists. Every way to make a terminal calls this
+/// first, and the first call holds the others until the hook is written.
+/// libghostty reads the hook only while a terminal loads an image, so nothing
+/// reads it during that one write. This is what lets [`replace_png_decoder`]
+/// be safe.
+pub(crate) fn hook_png_decoder() -> Result<()> {
+    static HOOKED: OnceLock<Result<()>> = OnceLock::new();
+    *HOOKED.get_or_init(|| {
+        let hook: ffi::SysDecodePngFn = Some(decode_png_hook);
+        crate::sys_set(
+            ffi::SysOption::DECODE_PNG,
+            hook.map_or(std::ptr::null(), |p| p as *const std::ffi::c_void),
+        )
+    })
+}
+
+/// libghostty's PNG hook: the decoder behind [`DECODE_PNG`], or a failed
+/// decode when there is none.
+unsafe extern "C" fn decode_png_hook(
+    _userdata: *mut std::ffi::c_void,
+    allocator: *const ffi::Allocator,
+    data: *const u8,
+    data_len: usize,
+    out: *mut ffi::SysImage,
+) -> bool {
+    // A panic while decoding aborts the process (we are inside an
+    // `extern "C"` callback), so the lock can't really be poisoned.
+    let mut decoder = DECODE_PNG.lock().unwrap_or_else(PoisonError::into_inner);
+    let Some(decoder) = decoder.as_deref_mut() else {
+        return false;
+    };
+    // SAFETY: We trust libghostty to return valid values.
+    let alloc = unsafe { Allocator::from_raw(allocator) };
+    let data = unsafe { std::slice::from_raw_parts(data, data_len) };
+
+    match decoder.decode_png(&alloc, data) {
+        // libghostty frees the buffer with the allocator it passed
+        // in, so a buffer from any other allocator would be freed
+        // with the wrong one. `DecodePng` is a safe trait and
+        // `Bytes::new` type-checks here, so reject such an image
+        // instead of trusting the decoder; dropping it frees the
+        // buffer with its own allocator.
+        Some(result) if result.data.allocator() != alloc.to_raw() => false,
+        Some(result) => {
+            // IMPORTANT: Do NOT run the Rust destructor here
+            // to avoid double-freeing the byte buffer.
+            let mut result = ManuallyDrop::new(result);
+            unsafe {
+                *out = ffi::SysImage {
+                    width: result.width,
+                    height: result.height,
+                    data: result.data.as_mut_ptr(),
+                    data_len: result.data.len(),
+                }
+            };
+            true
+        }
+        None => false,
+    }
 }
 
 /// A PNG decoder that can be used by the Kitty graphics protocol
@@ -1529,7 +1571,8 @@ pub trait DecodePng: Send + 'static {
     ///
     /// Decoding is serialized across all terminals. This method must not
     /// synchronously initiate or wait for another PNG decode, or call
-    /// [`set_png_decoder`], as doing so would deadlock or abort the process.
+    /// [`set_png_decoder`] or [`replace_png_decoder`], as doing so would
+    /// deadlock or abort the process.
     ///
     /// # On success
     ///
@@ -1554,16 +1597,12 @@ pub trait DecodePng: Send + 'static {
     ) -> Option<DecodedImage<'alloc>>;
 }
 
-/// A PNG decoder for [`set_png_decoder`] using the [`png`] crate.
+/// A PNG decoder for [`replace_png_decoder`] using the [`png`] crate.
 ///
 /// ```rust
 /// use libghostty_vt::kitty::graphics;
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// // SAFETY: No other thread uses libghostty yet.
-/// unsafe { graphics::set_png_decoder(Some(Box::new(graphics::RustPngDecoder::new()))) }?;
-/// # Ok(())
-/// # }
+/// graphics::replace_png_decoder(Some(Box::new(graphics::RustPngDecoder::new())));
 /// ```
 #[cfg(all(feature = "kitty-graphics", feature = "png"))]
 #[derive(Clone, Debug, Default)]
