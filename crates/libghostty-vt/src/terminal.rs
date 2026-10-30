@@ -340,6 +340,9 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     ///
     /// [`Boundaries::GROUND`] is a state, not a byte: asking for it at ground
     /// stops at once, consuming nothing, so write what follows without it.
+    /// [`Boundaries::SCREEN_SWITCH`] stops before its byte, not after: a
+    /// program that keeps a copy of the primary screen reads it there, as
+    /// it was before the switch.
     ///
     /// Like [`Self::vt_write`], the input is assumed to be untrusted.
     ///
@@ -2686,7 +2689,9 @@ bitflags::bitflags! {
     /// spellings count, the 7-bit one (ESC and a byte, such as `ESC ]`) and
     /// the 8-bit one (a byte from 0x80 to 0x9F, such as 0x9D). The string
     /// terminator ST is `ESC \` or 0x9C. [`GROUND`](Self::GROUND) is
-    /// different: the state between sequences, not a byte inside one.
+    /// different: the state between sequences, not a byte inside one. And
+    /// [`SCREEN_SWITCH`](Self::SCREEN_SWITCH) stops before its byte, not
+    /// after it.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct Boundaries: u32 {
         /// The stream is not inside an escape sequence or a partial UTF-8
@@ -2710,6 +2715,21 @@ bitflags::bitflags! {
         const OSC_START = ffi::TerminalBoundary::OSC_START as u32;
         /// The byte that ended an OSC string.
         const OSC_END = ffi::TerminalBoundary::OSC_END as u32;
+        /// The final byte of a mode set or reset (`CSI ? … h` or `l`) of
+        /// mode 47, 1047 or 1049, which switch between the primary and the
+        /// alternate screen. The stop lands right before the byte and
+        /// leaves it unconsumed: everything before the switch is processed,
+        /// a control inside the sequence too, and the switch is not, so the
+        /// screen the program switches away from reads as it left it.
+        /// [`WriteStop::screen`] says which mode and which way. The parse
+        /// finds the switch however the program wrote it: split across
+        /// writes, among other modes, with a control or an ignored byte
+        /// inside.
+        ///
+        /// The stop lands on the byte whether or not the screen would
+        /// change, and the next write would stop on it again: write it
+        /// without this boundary, then go on from the byte after it.
+        const SCREEN_SWITCH = ffi::TerminalBoundary::SCREEN_SWITCH as u32;
     }
 }
 
@@ -2794,6 +2814,21 @@ pub struct WriteStop {
     /// The byte that started or ended the string, such as `]`, 0x90, ESC or
     /// BEL, when a start or an end was reached.
     pub byte: Option<u8>,
+    /// The switch the byte left unconsumed would make, when
+    /// [`Boundaries::SCREEN_SWITCH`] was reached.
+    pub screen: Option<ScreenSwitch>,
+}
+
+/// A mode set or reset that switches between the primary and the alternate
+/// screen, which [`Terminal::vt_write_until`] stopped before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScreenSwitch {
+    /// The mode that switches: 47, 1047 or 1049, the first of them among
+    /// the sequence's parameters.
+    pub mode: u16,
+    /// A set (`h`), to the alternate screen, rather than a reset (`l`),
+    /// back to the primary.
+    pub set: bool,
 }
 
 impl WriteStop {
@@ -2808,6 +2843,12 @@ impl WriteStop {
             introducer: start.then(|| raw.introducer.try_into().ok()).flatten(),
             end: end.then(|| raw.end.try_into().ok()).flatten(),
             byte: (start || end).then_some(raw.byte),
+            screen: reached
+                .contains(Boundaries::SCREEN_SWITCH)
+                .then_some(ScreenSwitch {
+                    mode: raw.mode,
+                    set: raw.byte == b'h',
+                }),
         }
     }
 }
@@ -4526,6 +4567,63 @@ mod tests {
         assert_eq!(end.kind, Some(StringKind::Osc));
         assert_eq!((end.end, end.byte), (Some(StringEnd::Bel), Some(0x07)));
         assert_eq!(terminal.title().unwrap(), b"t");
+    }
+
+    #[test]
+    fn vt_write_until_stops_before_a_screen_switch() {
+        let switch = Boundaries::SCREEN_SWITCH;
+        let mut terminal = Terminal::new(8, 3).expect("terminal should initialize");
+        // A line feed inside the sequence runs before the switch, and the
+        // ignored 0xA3 leaves mode 1049.
+        let data = b"ab\x1b[?10\n4\xa39hcd";
+        let stop = terminal.vt_write_until(data, switch).unwrap().unwrap();
+        assert_eq!((stop.consumed, stop.reached), (data.len() - 3, switch));
+        assert_eq!(
+            stop.screen,
+            Some(ScreenSwitch {
+                mode: 1049,
+                set: true
+            })
+        );
+        assert_eq!((stop.kind, stop.byte), (None, None));
+        assert_eq!(
+            terminal.active_screen().unwrap(),
+            crate::screen::Screen::Primary
+        );
+        assert_eq!(terminal.cursor_y().unwrap(), 1);
+
+        // The next write would stop on the same byte: it goes without.
+        let rest = &data[stop.consumed..];
+        let again = terminal.vt_write_until(rest, switch).unwrap().unwrap();
+        assert_eq!(again.consumed, 0);
+        terminal.vt_write(&rest[..1]);
+        assert_eq!(
+            terminal.active_screen().unwrap(),
+            crate::screen::Screen::Alternate
+        );
+
+        // Back, and a set a colon drops does not stop.
+        let back = terminal
+            .vt_write_until(b"\x1b[?47l\x1b[?1049:1h", switch)
+            .unwrap()
+            .unwrap();
+        assert_eq!(back.consumed, 5);
+        assert_eq!(
+            back.screen,
+            Some(ScreenSwitch {
+                mode: 47,
+                set: false
+            })
+        );
+        terminal.vt_write(b"l");
+        assert_eq!(
+            terminal.active_screen().unwrap(),
+            crate::screen::Screen::Primary
+        );
+        assert_eq!(
+            terminal.vt_write_until(b"\x1b[?1049:1h", switch).unwrap(),
+            None
+        );
     }
 
     #[test]
