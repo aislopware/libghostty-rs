@@ -68,7 +68,7 @@
         target_abi = "sim",
         target_arch = "aarch64",
         target_endian = "little",
-        target_env = "",
+        target_env = "sim",
         target_os = "ios",
         target_pointer_width = "64",
         target_vendor = "apple"
@@ -495,6 +495,71 @@ mod layout_0 {
     };
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
+        ["Size of KittyDndPosition"][::std::mem::size_of::<KittyDndPosition>() - 32usize];
+        ["Alignment of KittyDndPosition"][::std::mem::align_of::<KittyDndPosition>() - 8usize];
+        ["Offset of field: KittyDndPosition::size"]
+            [::std::mem::offset_of!(KittyDndPosition, size) - 0usize];
+        ["Offset of field: KittyDndPosition::cell_x"]
+            [::std::mem::offset_of!(KittyDndPosition, cell_x) - 8usize];
+        ["Offset of field: KittyDndPosition::cell_y"]
+            [::std::mem::offset_of!(KittyDndPosition, cell_y) - 12usize];
+        ["Offset of field: KittyDndPosition::pixel_x"]
+            [::std::mem::offset_of!(KittyDndPosition, pixel_x) - 16usize];
+        ["Offset of field: KittyDndPosition::pixel_y"]
+            [::std::mem::offset_of!(KittyDndPosition, pixel_y) - 20usize];
+        ["Offset of field: KittyDndPosition::operations"]
+            [::std::mem::offset_of!(KittyDndPosition, operations) - 24usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of KittyDndDataRequest"][::std::mem::size_of::<KittyDndDataRequest>() - 32usize];
+        ["Alignment of KittyDndDataRequest"]
+            [::std::mem::align_of::<KittyDndDataRequest>() - 8usize];
+        ["Offset of field: KittyDndDataRequest::size"]
+            [::std::mem::offset_of!(KittyDndDataRequest, size) - 0usize];
+        ["Offset of field: KittyDndDataRequest::id"]
+            [::std::mem::offset_of!(KittyDndDataRequest, id) - 8usize];
+        ["Offset of field: KittyDndDataRequest::mime_index"]
+            [::std::mem::offset_of!(KittyDndDataRequest, mime_index) - 12usize];
+        ["Offset of field: KittyDndDataRequest::mime"]
+            [::std::mem::offset_of!(KittyDndDataRequest, mime) - 16usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of KittyDndImage"][::std::mem::size_of::<KittyDndImage>() - 40usize];
+        ["Alignment of KittyDndImage"][::std::mem::align_of::<KittyDndImage>() - 8usize];
+        ["Offset of field: KittyDndImage::size"]
+            [::std::mem::offset_of!(KittyDndImage, size) - 0usize];
+        ["Offset of field: KittyDndImage::format"]
+            [::std::mem::offset_of!(KittyDndImage, format) - 8usize];
+        ["Offset of field: KittyDndImage::width"]
+            [::std::mem::offset_of!(KittyDndImage, width) - 12usize];
+        ["Offset of field: KittyDndImage::height"]
+            [::std::mem::offset_of!(KittyDndImage, height) - 16usize];
+        ["Offset of field: KittyDndImage::opacity"]
+            [::std::mem::offset_of!(KittyDndImage, opacity) - 20usize];
+        ["Offset of field: KittyDndImage::data"]
+            [::std::mem::offset_of!(KittyDndImage, data) - 24usize];
+        ["Offset of field: KittyDndImage::data_len"]
+            [::std::mem::offset_of!(KittyDndImage, data_len) - 32usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of KittyDndDragData"][::std::mem::size_of::<KittyDndDragData>() - 32usize];
+        ["Alignment of KittyDndDragData"][::std::mem::align_of::<KittyDndDragData>() - 8usize];
+        ["Offset of field: KittyDndDragData::size"]
+            [::std::mem::offset_of!(KittyDndDragData, size) - 0usize];
+        ["Offset of field: KittyDndDragData::data"]
+            [::std::mem::offset_of!(KittyDndDragData, data) - 8usize];
+        ["Offset of field: KittyDndDragData::data_len"]
+            [::std::mem::offset_of!(KittyDndDragData, data_len) - 16usize];
+        ["Offset of field: KittyDndDragData::status"]
+            [::std::mem::offset_of!(KittyDndDragData, status) - 24usize];
+        ["Offset of field: KittyDndDragData::error"]
+            [::std::mem::offset_of!(KittyDndDragData, error) - 28usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
         ["Size of KittyGraphicsPlacementRenderInfo"]
             [::std::mem::size_of::<KittyGraphicsPlacementRenderInfo>() - 56usize];
         ["Alignment of KittyGraphicsPlacementRenderInfo"]
@@ -549,6 +614,27 @@ mod layout_0 {
             [::std::mem::offset_of!(TerminalScrollViewport, tag) - 0usize];
         ["Offset of field: TerminalScrollViewport::value"]
             [::std::mem::offset_of!(TerminalScrollViewport, value) - 8usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of TerminalWriteStop"][::std::mem::size_of::<TerminalWriteStop>() - 40usize];
+        ["Alignment of TerminalWriteStop"][::std::mem::align_of::<TerminalWriteStop>() - 8usize];
+        ["Offset of field: TerminalWriteStop::size"]
+            [::std::mem::offset_of!(TerminalWriteStop, size) - 0usize];
+        ["Offset of field: TerminalWriteStop::consumed"]
+            [::std::mem::offset_of!(TerminalWriteStop, consumed) - 8usize];
+        ["Offset of field: TerminalWriteStop::reached"]
+            [::std::mem::offset_of!(TerminalWriteStop, reached) - 16usize];
+        ["Offset of field: TerminalWriteStop::kind"]
+            [::std::mem::offset_of!(TerminalWriteStop, kind) - 20usize];
+        ["Offset of field: TerminalWriteStop::introducer"]
+            [::std::mem::offset_of!(TerminalWriteStop, introducer) - 24usize];
+        ["Offset of field: TerminalWriteStop::end"]
+            [::std::mem::offset_of!(TerminalWriteStop, end) - 28usize];
+        ["Offset of field: TerminalWriteStop::byte"]
+            [::std::mem::offset_of!(TerminalWriteStop, byte) - 32usize];
+        ["Offset of field: TerminalWriteStop::mode"]
+            [::std::mem::offset_of!(TerminalWriteStop, mode) - 34usize];
     };
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
@@ -887,7 +973,7 @@ mod layout_0 {
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
         ["Size of FormatterTerminalOptions"]
-            [::std::mem::size_of::<FormatterTerminalOptions>() - 56usize];
+            [::std::mem::size_of::<FormatterTerminalOptions>() - 64usize];
         ["Alignment of FormatterTerminalOptions"]
             [::std::mem::align_of::<FormatterTerminalOptions>() - 8usize];
         ["Offset of field: FormatterTerminalOptions::size"]
@@ -902,6 +988,8 @@ mod layout_0 {
             [::std::mem::offset_of!(FormatterTerminalOptions, extra) - 16usize];
         ["Offset of field: FormatterTerminalOptions::selection"]
             [::std::mem::offset_of!(FormatterTerminalOptions, selection) - 48usize];
+        ["Offset of field: FormatterTerminalOptions::semantic_prompt"]
+            [::std::mem::offset_of!(FormatterTerminalOptions, semantic_prompt) - 56usize];
     };
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
@@ -912,6 +1000,17 @@ mod layout_0 {
             [::std::mem::offset_of!(RenderStateOverscan, above) - 0usize];
         ["Offset of field: RenderStateOverscan::below"]
             [::std::mem::offset_of!(RenderStateOverscan, below) - 2usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of RenderStateRowDirtyView"]
+            [::std::mem::size_of::<RenderStateRowDirtyView>() - 16usize];
+        ["Alignment of RenderStateRowDirtyView"]
+            [::std::mem::align_of::<RenderStateRowDirtyView>() - 8usize];
+        ["Offset of field: RenderStateRowDirtyView::ptr"]
+            [::std::mem::offset_of!(RenderStateRowDirtyView, ptr) - 0usize];
+        ["Offset of field: RenderStateRowDirtyView::len"]
+            [::std::mem::offset_of!(RenderStateRowDirtyView, len) - 8usize];
     };
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
@@ -1446,6 +1545,71 @@ mod layout_1 {
     };
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
+        ["Size of KittyDndPosition"][::std::mem::size_of::<KittyDndPosition>() - 24usize];
+        ["Alignment of KittyDndPosition"][::std::mem::align_of::<KittyDndPosition>() - 4usize];
+        ["Offset of field: KittyDndPosition::size"]
+            [::std::mem::offset_of!(KittyDndPosition, size) - 0usize];
+        ["Offset of field: KittyDndPosition::cell_x"]
+            [::std::mem::offset_of!(KittyDndPosition, cell_x) - 4usize];
+        ["Offset of field: KittyDndPosition::cell_y"]
+            [::std::mem::offset_of!(KittyDndPosition, cell_y) - 8usize];
+        ["Offset of field: KittyDndPosition::pixel_x"]
+            [::std::mem::offset_of!(KittyDndPosition, pixel_x) - 12usize];
+        ["Offset of field: KittyDndPosition::pixel_y"]
+            [::std::mem::offset_of!(KittyDndPosition, pixel_y) - 16usize];
+        ["Offset of field: KittyDndPosition::operations"]
+            [::std::mem::offset_of!(KittyDndPosition, operations) - 20usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of KittyDndDataRequest"][::std::mem::size_of::<KittyDndDataRequest>() - 20usize];
+        ["Alignment of KittyDndDataRequest"]
+            [::std::mem::align_of::<KittyDndDataRequest>() - 4usize];
+        ["Offset of field: KittyDndDataRequest::size"]
+            [::std::mem::offset_of!(KittyDndDataRequest, size) - 0usize];
+        ["Offset of field: KittyDndDataRequest::id"]
+            [::std::mem::offset_of!(KittyDndDataRequest, id) - 4usize];
+        ["Offset of field: KittyDndDataRequest::mime_index"]
+            [::std::mem::offset_of!(KittyDndDataRequest, mime_index) - 8usize];
+        ["Offset of field: KittyDndDataRequest::mime"]
+            [::std::mem::offset_of!(KittyDndDataRequest, mime) - 12usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of KittyDndImage"][::std::mem::size_of::<KittyDndImage>() - 28usize];
+        ["Alignment of KittyDndImage"][::std::mem::align_of::<KittyDndImage>() - 4usize];
+        ["Offset of field: KittyDndImage::size"]
+            [::std::mem::offset_of!(KittyDndImage, size) - 0usize];
+        ["Offset of field: KittyDndImage::format"]
+            [::std::mem::offset_of!(KittyDndImage, format) - 4usize];
+        ["Offset of field: KittyDndImage::width"]
+            [::std::mem::offset_of!(KittyDndImage, width) - 8usize];
+        ["Offset of field: KittyDndImage::height"]
+            [::std::mem::offset_of!(KittyDndImage, height) - 12usize];
+        ["Offset of field: KittyDndImage::opacity"]
+            [::std::mem::offset_of!(KittyDndImage, opacity) - 16usize];
+        ["Offset of field: KittyDndImage::data"]
+            [::std::mem::offset_of!(KittyDndImage, data) - 20usize];
+        ["Offset of field: KittyDndImage::data_len"]
+            [::std::mem::offset_of!(KittyDndImage, data_len) - 24usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of KittyDndDragData"][::std::mem::size_of::<KittyDndDragData>() - 20usize];
+        ["Alignment of KittyDndDragData"][::std::mem::align_of::<KittyDndDragData>() - 4usize];
+        ["Offset of field: KittyDndDragData::size"]
+            [::std::mem::offset_of!(KittyDndDragData, size) - 0usize];
+        ["Offset of field: KittyDndDragData::data"]
+            [::std::mem::offset_of!(KittyDndDragData, data) - 4usize];
+        ["Offset of field: KittyDndDragData::data_len"]
+            [::std::mem::offset_of!(KittyDndDragData, data_len) - 8usize];
+        ["Offset of field: KittyDndDragData::status"]
+            [::std::mem::offset_of!(KittyDndDragData, status) - 12usize];
+        ["Offset of field: KittyDndDragData::error"]
+            [::std::mem::offset_of!(KittyDndDragData, error) - 16usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
         ["Size of KittyGraphicsPlacementRenderInfo"]
             [::std::mem::size_of::<KittyGraphicsPlacementRenderInfo>() - 48usize];
         ["Alignment of KittyGraphicsPlacementRenderInfo"]
@@ -1500,6 +1664,27 @@ mod layout_1 {
             [::std::mem::offset_of!(TerminalScrollViewport, tag) - 0usize];
         ["Offset of field: TerminalScrollViewport::value"]
             [::std::mem::offset_of!(TerminalScrollViewport, value) - 8usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of TerminalWriteStop"][::std::mem::size_of::<TerminalWriteStop>() - 28usize];
+        ["Alignment of TerminalWriteStop"][::std::mem::align_of::<TerminalWriteStop>() - 4usize];
+        ["Offset of field: TerminalWriteStop::size"]
+            [::std::mem::offset_of!(TerminalWriteStop, size) - 0usize];
+        ["Offset of field: TerminalWriteStop::consumed"]
+            [::std::mem::offset_of!(TerminalWriteStop, consumed) - 4usize];
+        ["Offset of field: TerminalWriteStop::reached"]
+            [::std::mem::offset_of!(TerminalWriteStop, reached) - 8usize];
+        ["Offset of field: TerminalWriteStop::kind"]
+            [::std::mem::offset_of!(TerminalWriteStop, kind) - 12usize];
+        ["Offset of field: TerminalWriteStop::introducer"]
+            [::std::mem::offset_of!(TerminalWriteStop, introducer) - 16usize];
+        ["Offset of field: TerminalWriteStop::end"]
+            [::std::mem::offset_of!(TerminalWriteStop, end) - 20usize];
+        ["Offset of field: TerminalWriteStop::byte"]
+            [::std::mem::offset_of!(TerminalWriteStop, byte) - 24usize];
+        ["Offset of field: TerminalWriteStop::mode"]
+            [::std::mem::offset_of!(TerminalWriteStop, mode) - 26usize];
     };
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
@@ -1838,7 +2023,7 @@ mod layout_1 {
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
         ["Size of FormatterTerminalOptions"]
-            [::std::mem::size_of::<FormatterTerminalOptions>() - 40usize];
+            [::std::mem::size_of::<FormatterTerminalOptions>() - 44usize];
         ["Alignment of FormatterTerminalOptions"]
             [::std::mem::align_of::<FormatterTerminalOptions>() - 4usize];
         ["Offset of field: FormatterTerminalOptions::size"]
@@ -1853,6 +2038,8 @@ mod layout_1 {
             [::std::mem::offset_of!(FormatterTerminalOptions, extra) - 12usize];
         ["Offset of field: FormatterTerminalOptions::selection"]
             [::std::mem::offset_of!(FormatterTerminalOptions, selection) - 36usize];
+        ["Offset of field: FormatterTerminalOptions::semantic_prompt"]
+            [::std::mem::offset_of!(FormatterTerminalOptions, semantic_prompt) - 40usize];
     };
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
@@ -1863,6 +2050,17 @@ mod layout_1 {
             [::std::mem::offset_of!(RenderStateOverscan, above) - 0usize];
         ["Offset of field: RenderStateOverscan::below"]
             [::std::mem::offset_of!(RenderStateOverscan, below) - 2usize];
+    };
+    #[allow(clippy::unnecessary_operation, clippy::identity_op)]
+    const _: () = {
+        ["Size of RenderStateRowDirtyView"]
+            [::std::mem::size_of::<RenderStateRowDirtyView>() - 8usize];
+        ["Alignment of RenderStateRowDirtyView"]
+            [::std::mem::align_of::<RenderStateRowDirtyView>() - 4usize];
+        ["Offset of field: RenderStateRowDirtyView::ptr"]
+            [::std::mem::offset_of!(RenderStateRowDirtyView, ptr) - 0usize];
+        ["Offset of field: RenderStateRowDirtyView::len"]
+            [::std::mem::offset_of!(RenderStateRowDirtyView, len) - 4usize];
     };
     #[allow(clippy::unnecessary_operation, clippy::identity_op)]
     const _: () = {
@@ -2030,144 +2228,142 @@ mod layout_1 {
             [::std::mem::offset_of!(Paste, allow_unsafe) - 28usize];
     };
 }
-/// Present only on a target one of the modules above checks.
+#[doc = r" Present only on a target one of the modules above checks."]
 #[cfg(any(
-    any(
-        all(
-            target_abi = "",
-            target_arch = "x86_64",
-            target_endian = "little",
-            target_env = "gnu",
-            target_os = "linux",
-            target_pointer_width = "64",
-            target_vendor = "unknown"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "x86_64",
-            target_endian = "little",
-            target_env = "musl",
-            target_os = "linux",
-            target_pointer_width = "64",
-            target_vendor = "unknown"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "aarch64",
-            target_endian = "little",
-            target_env = "gnu",
-            target_os = "linux",
-            target_pointer_width = "64",
-            target_vendor = "unknown"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "aarch64",
-            target_endian = "little",
-            target_env = "musl",
-            target_os = "linux",
-            target_pointer_width = "64",
-            target_vendor = "unknown"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "aarch64",
-            target_endian = "little",
-            target_env = "",
-            target_os = "macos",
-            target_pointer_width = "64",
-            target_vendor = "apple"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "x86_64",
-            target_endian = "little",
-            target_env = "",
-            target_os = "macos",
-            target_pointer_width = "64",
-            target_vendor = "apple"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "aarch64",
-            target_endian = "little",
-            target_env = "",
-            target_os = "ios",
-            target_pointer_width = "64",
-            target_vendor = "apple"
-        ),
-        all(
-            target_abi = "sim",
-            target_arch = "aarch64",
-            target_endian = "little",
-            target_env = "",
-            target_os = "ios",
-            target_pointer_width = "64",
-            target_vendor = "apple"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "x86_64",
-            target_endian = "little",
-            target_env = "gnu",
-            target_os = "windows",
-            target_pointer_width = "64",
-            target_vendor = "pc"
-        ),
-        all(
-            target_abi = "llvm",
-            target_arch = "aarch64",
-            target_endian = "little",
-            target_env = "gnu",
-            target_os = "windows",
-            target_pointer_width = "64",
-            target_vendor = "pc"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "x86_64",
-            target_endian = "little",
-            target_env = "msvc",
-            target_os = "windows",
-            target_pointer_width = "64",
-            target_vendor = "pc"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "aarch64",
-            target_endian = "little",
-            target_env = "msvc",
-            target_os = "windows",
-            target_pointer_width = "64",
-            target_vendor = "pc"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "aarch64",
-            target_endian = "little",
-            target_env = "",
-            target_os = "android",
-            target_pointer_width = "64",
-            target_vendor = "unknown"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "x86_64",
-            target_endian = "little",
-            target_env = "",
-            target_os = "android",
-            target_pointer_width = "64",
-            target_vendor = "unknown"
-        ),
-        all(
-            target_abi = "",
-            target_arch = "wasm64",
-            target_endian = "little",
-            target_env = "",
-            target_os = "unknown",
-            target_pointer_width = "64",
-            target_vendor = "unknown"
-        )
+    all(
+        target_abi = "",
+        target_arch = "x86_64",
+        target_endian = "little",
+        target_env = "gnu",
+        target_os = "linux",
+        target_pointer_width = "64",
+        target_vendor = "unknown"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "x86_64",
+        target_endian = "little",
+        target_env = "musl",
+        target_os = "linux",
+        target_pointer_width = "64",
+        target_vendor = "unknown"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "aarch64",
+        target_endian = "little",
+        target_env = "gnu",
+        target_os = "linux",
+        target_pointer_width = "64",
+        target_vendor = "unknown"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "aarch64",
+        target_endian = "little",
+        target_env = "musl",
+        target_os = "linux",
+        target_pointer_width = "64",
+        target_vendor = "unknown"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "aarch64",
+        target_endian = "little",
+        target_env = "",
+        target_os = "macos",
+        target_pointer_width = "64",
+        target_vendor = "apple"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "x86_64",
+        target_endian = "little",
+        target_env = "",
+        target_os = "macos",
+        target_pointer_width = "64",
+        target_vendor = "apple"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "aarch64",
+        target_endian = "little",
+        target_env = "",
+        target_os = "ios",
+        target_pointer_width = "64",
+        target_vendor = "apple"
+    ),
+    all(
+        target_abi = "sim",
+        target_arch = "aarch64",
+        target_endian = "little",
+        target_env = "sim",
+        target_os = "ios",
+        target_pointer_width = "64",
+        target_vendor = "apple"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "x86_64",
+        target_endian = "little",
+        target_env = "gnu",
+        target_os = "windows",
+        target_pointer_width = "64",
+        target_vendor = "pc"
+    ),
+    all(
+        target_abi = "llvm",
+        target_arch = "aarch64",
+        target_endian = "little",
+        target_env = "gnu",
+        target_os = "windows",
+        target_pointer_width = "64",
+        target_vendor = "pc"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "x86_64",
+        target_endian = "little",
+        target_env = "msvc",
+        target_os = "windows",
+        target_pointer_width = "64",
+        target_vendor = "pc"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "aarch64",
+        target_endian = "little",
+        target_env = "msvc",
+        target_os = "windows",
+        target_pointer_width = "64",
+        target_vendor = "pc"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "aarch64",
+        target_endian = "little",
+        target_env = "",
+        target_os = "android",
+        target_pointer_width = "64",
+        target_vendor = "unknown"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "x86_64",
+        target_endian = "little",
+        target_env = "",
+        target_os = "android",
+        target_pointer_width = "64",
+        target_vendor = "unknown"
+    ),
+    all(
+        target_abi = "",
+        target_arch = "wasm64",
+        target_endian = "little",
+        target_env = "",
+        target_os = "unknown",
+        target_pointer_width = "64",
+        target_vendor = "unknown"
     ),
     all(
         target_abi = "",
