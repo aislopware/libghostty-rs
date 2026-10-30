@@ -145,6 +145,10 @@ fn main() {
         attrs: Vec::new(),
         items: Vec::new(),
     };
+    // Every target with checks, so the crate can refuse a target that gets none: its build's
+    // cfg matching no module would otherwise compile without a single layout check.
+    let every: Vec<syn::Meta> =
+        layouts.iter().flat_map(|(_, targets)| targets.iter().cloned()).collect();
     for (index, (layout, targets)) in layouts.into_iter().enumerate() {
         let name = quote::format_ident!("layout_{index}");
         let items = syn::parse_file(&layout).unwrap().items;
@@ -161,6 +165,11 @@ fn main() {
             }
         });
     }
+    checks.items.push(syn::parse_quote! {
+        /// Present only on a target one of the modules above checks.
+        #[cfg(any(#(#every),*))]
+        pub(crate) const CHECKED: () = ();
+    });
     write_generated(&manifest_dir.join("src/layouts.rs"), checks);
 }
 

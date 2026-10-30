@@ -2030,3 +2030,153 @@ mod layout_1 {
             [::std::mem::offset_of!(Paste, allow_unsafe) - 28usize];
     };
 }
+/// Present only on a target one of the modules above checks.
+#[cfg(any(
+    any(
+        all(
+            target_abi = "",
+            target_arch = "x86_64",
+            target_endian = "little",
+            target_env = "gnu",
+            target_os = "linux",
+            target_pointer_width = "64",
+            target_vendor = "unknown"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "x86_64",
+            target_endian = "little",
+            target_env = "musl",
+            target_os = "linux",
+            target_pointer_width = "64",
+            target_vendor = "unknown"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "aarch64",
+            target_endian = "little",
+            target_env = "gnu",
+            target_os = "linux",
+            target_pointer_width = "64",
+            target_vendor = "unknown"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "aarch64",
+            target_endian = "little",
+            target_env = "musl",
+            target_os = "linux",
+            target_pointer_width = "64",
+            target_vendor = "unknown"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "aarch64",
+            target_endian = "little",
+            target_env = "",
+            target_os = "macos",
+            target_pointer_width = "64",
+            target_vendor = "apple"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "x86_64",
+            target_endian = "little",
+            target_env = "",
+            target_os = "macos",
+            target_pointer_width = "64",
+            target_vendor = "apple"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "aarch64",
+            target_endian = "little",
+            target_env = "",
+            target_os = "ios",
+            target_pointer_width = "64",
+            target_vendor = "apple"
+        ),
+        all(
+            target_abi = "sim",
+            target_arch = "aarch64",
+            target_endian = "little",
+            target_env = "",
+            target_os = "ios",
+            target_pointer_width = "64",
+            target_vendor = "apple"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "x86_64",
+            target_endian = "little",
+            target_env = "gnu",
+            target_os = "windows",
+            target_pointer_width = "64",
+            target_vendor = "pc"
+        ),
+        all(
+            target_abi = "llvm",
+            target_arch = "aarch64",
+            target_endian = "little",
+            target_env = "gnu",
+            target_os = "windows",
+            target_pointer_width = "64",
+            target_vendor = "pc"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "x86_64",
+            target_endian = "little",
+            target_env = "msvc",
+            target_os = "windows",
+            target_pointer_width = "64",
+            target_vendor = "pc"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "aarch64",
+            target_endian = "little",
+            target_env = "msvc",
+            target_os = "windows",
+            target_pointer_width = "64",
+            target_vendor = "pc"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "aarch64",
+            target_endian = "little",
+            target_env = "",
+            target_os = "android",
+            target_pointer_width = "64",
+            target_vendor = "unknown"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "x86_64",
+            target_endian = "little",
+            target_env = "",
+            target_os = "android",
+            target_pointer_width = "64",
+            target_vendor = "unknown"
+        ),
+        all(
+            target_abi = "",
+            target_arch = "wasm64",
+            target_endian = "little",
+            target_env = "",
+            target_os = "unknown",
+            target_pointer_width = "64",
+            target_vendor = "unknown"
+        )
+    ),
+    all(
+        target_abi = "",
+        target_arch = "wasm32",
+        target_endian = "little",
+        target_env = "",
+        target_os = "unknown",
+        target_pointer_width = "32",
+        target_vendor = "unknown"
+    )
+))]
+pub(crate) const CHECKED: () = ();

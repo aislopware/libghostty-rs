@@ -9,6 +9,10 @@ mod bindings;
 // that last regenerated the shared declarations.
 mod layouts;
 
+// A target the generated checks do not name builds with none at all, so its C ABI goes
+// unchecked: refuse it instead. gen-bindings lists the targets it checks.
+const _: () = layouts::CHECKED;
+
 use std::ops::Deref;
 
 pub use bindings::*;
