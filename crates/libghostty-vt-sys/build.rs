@@ -31,11 +31,8 @@ const GHOSTTY_COMMIT: &str = "031685561440826283f81d5a6a4c4965e63e87bc";
 /// another, since a newer patch release usually builds the same library.
 const ZIG_VERSION: &str = "0.17.0";
 
-/// File name of the static archive on Windows. Ghostty installs it under this
-/// name for every Windows ABI so it does not collide with `ghostty-vt.lib`,
-/// the import library for `ghostty-vt.dll`. Validation and link emission must
-/// agree on it, or the build silently links the import library instead.
-const WINDOWS_STATIC_LIB_FILE: &str = "ghostty-vt-static.lib";
+/// File name of the static archive Ghostty installs.
+const STATIC_LIB_FILE: &str = "libghostty-vt.a";
 
 /// Written into a cached prebuilt entry, holding its sha256, as the last step
 /// before the entry is published by a rename. An entry without it, or with
@@ -94,16 +91,11 @@ impl LinkMode {
             Self::Dynamic => {
                 if target.contains("darwin") {
                     file_name.starts_with("libghostty-vt") && file_name.ends_with(".dylib")
-                } else if target.contains("windows") {
-                    file_name == "ghostty-vt.lib"
-                        || file_name == "ghostty-vt.dll"
-                        || file_name == "libghostty-vt.dll.lib"
-                        || file_name == "libghostty-vt.dll.a"
                 } else {
                     file_name == "libghostty-vt.so" || file_name.starts_with("libghostty-vt.so.")
                 }
             }
-            Self::Static => file_name == static_lib_file(target),
+            Self::Static => file_name == STATIC_LIB_FILE,
         }
     }
 
@@ -113,15 +105,6 @@ impl LinkMode {
             Self::Dynamic => "libghostty-vt",
             Self::Static => "libghostty-vt-static",
         }
-    }
-}
-
-/// The file name of the static archive Ghostty installs for `target`.
-fn static_lib_file(target: &str) -> &'static str {
-    if target.contains("windows") {
-        WINDOWS_STATIC_LIB_FILE
-    } else {
-        "libghostty-vt.a"
     }
 }
 
@@ -214,10 +197,9 @@ fn emit_link(
     origin: &str,
     watch: bool,
 ) {
-    let search_dirs = library_search_dirs(target, prefix);
-    let libraries: Vec<PathBuf> = search_dirs
-        .iter()
-        .filter_map(|dir| fs::read_dir(dir).ok())
+    let lib_dir = prefix.join("lib");
+    let libraries: Vec<PathBuf> = fs::read_dir(&lib_dir)
+        .into_iter()
         .flatten()
         .filter_map(Result::ok)
         .filter(|entry| {
@@ -230,8 +212,9 @@ fn emit_link(
         .collect();
     assert!(
         !libraries.is_empty(),
-        "expected the libghostty-vt {} for {target} in one of {search_dirs:?} (from {origin})",
+        "expected the libghostty-vt {} for {target} in {} (from {origin})",
         link_mode.artifact_kind(),
+        lib_dir.display(),
     );
     assert!(
         include_dir.join("ghostty").join("vt.h").exists(),
@@ -252,12 +235,10 @@ fn emit_link(
         "cargo:rustc-env=LIBGHOSTTY_VT_SYS_INCLUDE_DIR={}",
         include_dir.display()
     );
-    for dir in &search_dirs {
-        println!("cargo:rustc-link-search=native={}", dir.display());
-    }
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
     match link_mode {
         LinkMode::Dynamic => println!("cargo:rustc-link-lib=dylib=ghostty-vt"),
-        LinkMode::Static => emit_static_link_lib(target),
+        LinkMode::Static => println!("cargo:rustc-link-lib=static=ghostty-vt"),
     }
     emit_include_metadata(&[include_dir.to_path_buf()]);
 }
@@ -421,8 +402,6 @@ fn cache_root() -> Option<PathBuf> {
     }
     let base = if cfg!(target_os = "macos") {
         env_path("HOME")?.join("Library").join("Caches")
-    } else if cfg!(windows) {
-        env_path("LOCALAPPDATA")?
     } else {
         // The XDG spec ignores a relative XDG_CACHE_HOME.
         env_path("XDG_CACHE_HOME")
@@ -441,7 +420,7 @@ fn cache_root() -> Option<PathBuf> {
 /// complete entry, and an interrupted one leaves only a stray `.staging-*`.
 fn fetch_prebuilt(root: &Path, entry: &PrebuiltEntry, target: &str) -> PathBuf {
     let dir = root.join(&entry.sha256);
-    if is_cached(&dir, &entry.sha256, target) {
+    if is_cached(&dir, &entry.sha256) {
         return dir;
     }
 
@@ -463,14 +442,14 @@ fn fetch_prebuilt(root: &Path, entry: &PrebuiltEntry, target: &str) -> PathBuf {
 
     // An entry under this hash without a valid stamp is damaged (someone
     // edited or half-deleted it) and would refuse the rename.
-    if dir.exists() && !is_cached(&dir, &entry.sha256, target) {
+    if dir.exists() && !is_cached(&dir, &entry.sha256) {
         let _ = fs::remove_dir_all(&dir);
     }
     if fs::rename(&staging, &dir).is_err() {
         // Another build published the same archive first; its copy is as good.
         let _ = fs::remove_dir_all(&staging);
         assert!(
-            is_cached(&dir, &entry.sha256, target),
+            is_cached(&dir, &entry.sha256),
             "failed to publish the prebuilt libghostty-vt into {}",
             dir.display()
         );
@@ -483,20 +462,20 @@ fn fetch_prebuilt(root: &Path, entry: &PrebuiltEntry, target: &str) -> PathBuf {
 /// The stamp is the last thing written before the entry is renamed into
 /// place, after the archive's hash was checked, so it stands for that check;
 /// the archive is not hashed again on every build script run.
-fn is_cached(dir: &Path, sha256: &str, target: &str) -> bool {
+fn is_cached(dir: &Path, sha256: &str) -> bool {
     fs::read_to_string(dir.join(PREBUILT_STAMP_FILE)).is_ok_and(|stamp| stamp.trim() == sha256)
-        && dir.join("lib").join(static_lib_file(target)).is_file()
+        && dir.join("lib").join(STATIC_LIB_FILE).is_file()
         && dir.join("include").join("ghostty").join("vt.h").is_file()
 }
 
 /// Download `entry` to `archive` with curl, check its sha256, unpack it into
 /// `staging` with tar and check what it holds.
 ///
-/// curl and tar ship with macOS, Linux distributions and Windows 10 and
-/// later, and a gzip tarball is the one archive all three tars unpack
-/// without another tool (GNU tar shells out to `zstd`, which is often not
-/// installed). The hash is computed here rather than by `shasum`,
-/// `sha256sum` or `certutil`, which differ per OS in name and output.
+/// curl and tar ship with macOS and Linux distributions, and a gzip tarball
+/// is the one archive both bsdtar and GNU tar unpack without another tool
+/// (GNU tar shells out to `zstd`, which is often not installed). The hash is
+/// computed here rather than by `shasum` or `sha256sum`, which differ per OS
+/// in name and output.
 fn download_and_unpack(
     entry: &PrebuiltEntry,
     target: &str,
@@ -576,11 +555,10 @@ fn download_and_unpack(
             ));
         }
     }
-    if !is_complete_unpack(staging, target) {
+    if !is_complete_unpack(staging) {
         return Err(format!(
             "{} does not hold lib/{} and include/ghostty/vt.h",
-            entry.url,
-            static_lib_file(target)
+            entry.url, STATIC_LIB_FILE
         ));
     }
 
@@ -592,8 +570,8 @@ fn download_and_unpack(
     })
 }
 
-fn is_complete_unpack(dir: &Path, target: &str) -> bool {
-    dir.join("lib").join(static_lib_file(target)).is_file()
+fn is_complete_unpack(dir: &Path) -> bool {
+    dir.join("lib").join(STATIC_LIB_FILE).is_file()
         && dir.join("include").join("ghostty").join("vt.h").is_file()
 }
 
@@ -874,23 +852,6 @@ fn command_output(program: impl AsRef<OsStr>, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// Emit the link directive for the static archive.
-///
-/// Zig names static archives `<name>.lib` on every Windows ABI, so neither
-/// name rustc derives from a plain `static=ghostty-vt` finds the archive
-/// there: MSVC resolves it to `ghostty-vt.lib`, the DLL import library, which
-/// links but leaves a load-time dependency on `ghostty-vt.dll`; the GNU
-/// targets look for `libghostty-vt.a`, which no Windows build produces, and
-/// fail outright. Link the exact file name Ghostty installs instead, which
-/// `+verbatim` passes through to rustc's archive lookup untouched.
-fn emit_static_link_lib(target: &str) {
-    if target.contains("windows") {
-        println!("cargo:rustc-link-lib=static:+verbatim={WINDOWS_STATIC_LIB_FILE}");
-    } else {
-        println!("cargo:rustc-link-lib=static=ghostty-vt");
-    }
-}
-
 fn warn_unused_xcframework(lib_dir: &Path) {
     let xcframework = lib_dir.join("ghostty-vt.xcframework");
     if xcframework.exists() {
@@ -940,7 +901,7 @@ fn emit_static_pkg_config_metadata(lib: &pkg_config::Library, target: &str) {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
 
-    emit_static_link_lib(target);
+    println!("cargo:rustc-link-lib=static=ghostty-vt");
     for library in &lib.libs {
         if library != "ghostty-vt" {
             println!("cargo:rustc-link-lib={library}");
@@ -1068,17 +1029,6 @@ fn run(mut command: Command, context: &str) {
     assert!(status.success(), "{context} failed with status {status}");
 }
 
-/// Returns directories to search for the library artifact.
-/// On Windows, Zig may place the DLL in `bin/` and the import lib in `lib/`,
-/// so both are included.
-fn library_search_dirs(target: &str, install_prefix: &Path) -> Vec<PathBuf> {
-    let mut dirs = vec![install_prefix.join("lib")];
-    if target.contains("windows") {
-        dirs.push(install_prefix.join("bin"));
-    }
-    dirs
-}
-
 /// The platform directory inside `ghostty-vt.xcframework` for an iOS Rust
 /// target, or `None` for targets that build directly via `-Dtarget`. Ghostty
 /// emits an arm64-only simulator library (what the simulator runs on Apple
@@ -1165,10 +1115,6 @@ fn zig_target(target: &str) -> String {
         "aarch64-unknown-linux-musl" => "aarch64-linux-musl",
         "aarch64-apple-darwin" => "aarch64-macos-none",
         "x86_64-apple-darwin" => "x86_64-macos-none",
-        "x86_64-pc-windows-gnu" => "x86_64-windows-gnu",
-        "aarch64-pc-windows-gnullvm" => "aarch64-windows-gnu",
-        "x86_64-pc-windows-msvc" => "x86_64-windows-msvc",
-        "aarch64-pc-windows-msvc" => "aarch64-windows-msvc",
         "aarch64-linux-android" => "aarch64-linux-android",
         "x86_64-linux-android" => "x86_64-linux-android",
         "wasm32-unknown-unknown" => "wasm32-freestanding",

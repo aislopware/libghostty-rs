@@ -75,42 +75,6 @@
     ),
     all(
         target_abi = "",
-        target_arch = "x86_64",
-        target_endian = "little",
-        target_env = "gnu",
-        target_os = "windows",
-        target_pointer_width = "64",
-        target_vendor = "pc"
-    ),
-    all(
-        target_abi = "llvm",
-        target_arch = "aarch64",
-        target_endian = "little",
-        target_env = "gnu",
-        target_os = "windows",
-        target_pointer_width = "64",
-        target_vendor = "pc"
-    ),
-    all(
-        target_abi = "",
-        target_arch = "x86_64",
-        target_endian = "little",
-        target_env = "msvc",
-        target_os = "windows",
-        target_pointer_width = "64",
-        target_vendor = "pc"
-    ),
-    all(
-        target_abi = "",
-        target_arch = "aarch64",
-        target_endian = "little",
-        target_env = "msvc",
-        target_os = "windows",
-        target_pointer_width = "64",
-        target_vendor = "pc"
-    ),
-    all(
-        target_abi = "",
         target_arch = "aarch64",
         target_endian = "little",
         target_env = "",
@@ -1959,42 +1923,6 @@ mod layout_1 {
         target_os = "ios",
         target_pointer_width = "64",
         target_vendor = "apple"
-    ),
-    all(
-        target_abi = "",
-        target_arch = "x86_64",
-        target_endian = "little",
-        target_env = "gnu",
-        target_os = "windows",
-        target_pointer_width = "64",
-        target_vendor = "pc"
-    ),
-    all(
-        target_abi = "llvm",
-        target_arch = "aarch64",
-        target_endian = "little",
-        target_env = "gnu",
-        target_os = "windows",
-        target_pointer_width = "64",
-        target_vendor = "pc"
-    ),
-    all(
-        target_abi = "",
-        target_arch = "x86_64",
-        target_endian = "little",
-        target_env = "msvc",
-        target_os = "windows",
-        target_pointer_width = "64",
-        target_vendor = "pc"
-    ),
-    all(
-        target_abi = "",
-        target_arch = "aarch64",
-        target_endian = "little",
-        target_env = "msvc",
-        target_os = "windows",
-        target_pointer_width = "64",
-        target_vendor = "pc"
     ),
     all(
         target_abi = "",

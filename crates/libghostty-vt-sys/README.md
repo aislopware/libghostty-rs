@@ -13,9 +13,8 @@ Raw FFI bindings for libghostty-vt.
   or a hash mismatch fails the build with the fix in the message; it never
   falls back to building from source.
 - The cache is `LIBGHOSTTY_VT_SYS_CACHE_DIR` when set, else
-  `~/Library/Caches/libghostty-vt` on macOS, `$XDG_CACHE_HOME/libghostty-vt`
-  or `~/.cache/libghostty-vt` on Linux and `%LOCALAPPDATA%\libghostty-vt` on
-  Windows. Each entry is `<sha256>/` with `lib/`, `include/` and `meta.toml`;
+  `~/Library/Caches/libghostty-vt` on macOS and `$XDG_CACHE_HOME/libghostty-vt`
+  or `~/.cache/libghostty-vt` on Linux. Each entry is `<sha256>/` with `lib/`, `include/` and `meta.toml`;
   delete any of them at will, and the next build fetches it again.
 - Set `LIBGHOSTTY_VT_SYS_LIB_DIR` to a directory with `lib/` and `include/`
   (an unpacked prebuilt archive, for example) to link it as it is, with no

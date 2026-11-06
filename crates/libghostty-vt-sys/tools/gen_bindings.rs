@@ -9,7 +9,7 @@ use heck::ToShoutySnakeCase;
 use quote::ToTokens;
 
 // Match the vendored targets in build.rs, including the iOS xcframeworks.
-// Clang spells the simulator and Windows GNU LLVM targets differently.
+// Clang spells the simulator targets differently.
 const TARGETS: &[(&str, &str)] = &[
     ("x86_64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"),
     ("x86_64-unknown-linux-musl", "x86_64-unknown-linux-musl"),
@@ -19,10 +19,6 @@ const TARGETS: &[(&str, &str)] = &[
     ("x86_64-apple-darwin", "x86_64-apple-darwin"),
     ("aarch64-apple-ios", "arm64-apple-ios"),
     ("aarch64-apple-ios-sim", "arm64-apple-ios-simulator"),
-    ("x86_64-pc-windows-gnu", "x86_64-pc-windows-gnu"),
-    ("aarch64-pc-windows-gnullvm", "aarch64-pc-windows-gnu"),
-    ("x86_64-pc-windows-msvc", "x86_64-pc-windows-msvc"),
-    ("aarch64-pc-windows-msvc", "aarch64-pc-windows-msvc"),
     ("aarch64-linux-android", "aarch64-linux-android"),
     ("x86_64-linux-android", "x86_64-linux-android"),
     ("wasm32-unknown-unknown", "wasm32-unknown-unknown"),

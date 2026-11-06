@@ -5328,9 +5328,8 @@ mod tests {
         assert_eq!(*callback_count.borrow(), 1);
     }
 
-    // The next two tests reach simdutf, which libghostty-vt DLLs on Windows
-    // used to crash in, since their C++ global constructors never ran. Pure
-    // ASCII never reaches it.
+    // The next two tests reach simdutf, whose C++ code pure ASCII never
+    // reaches.
 
     #[test]
     fn clipboard_write_decodes_base64() {
