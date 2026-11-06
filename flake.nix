@@ -19,7 +19,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     ghostty = {
-      url = "github:aislopware/ghostty/18fb1bb116b147375a144b1466d8ec857bf4a100";
+      url = "github:aislopware/ghostty/031685561440826283f81d5a6a4c4965e63e87bc";
     };
   };
 

@@ -51,43 +51,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Building
 
-Requires [Zig](https://ziglang.org/) 0.17.x on PATH, or selected through `ZIG`.
-Set `ZIG` to an executable path or command name, without arguments, to override
-the default `zig` executable. By default, the ghostty source is fetched
-automatically at build time from the pinned commit in `build.rs`.
-Set `GHOSTTY_SOURCE_DIR` to make the build use a local Ghostty
-checkout instead. Package managers that need network-free builds can also set
-`GHOSTTY_ZIG_SYSTEM_DIR` to a pre-fetched Zig package directory; this is passed
-to `zig build --system` so Zig does not download package dependencies during
-the Cargo build script.
+No Zig is needed by default. `libghostty-vt-sys` links a prebuilt static
+`libghostty-vt` for the Ghostty commit pinned in `build.rs`: `prebuilt.toml`
+maps each Rust target to a release asset and its sha256, and the build script
+downloads it with `curl`, checks the hash, and caches it outside `target/`
+under `$LIBGHOSTTY_VT_SYS_CACHE_DIR` (or the platform cache directory), one
+directory per hash. A target with no entry, or an archive whose hash does not
+match, fails the build with the fix in the message. Prebuilt targets:
+`aarch64-apple-darwin`, `aarch64-apple-ios`, `aarch64-apple-ios-sim`,
+`x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
 
-Vendored builds derive Zig's optimize mode from Cargo's profile: dev builds use
-`Debug`, size-optimized builds use `ReleaseSmall`, and other release builds use
-`ReleaseFast`. Set `LIBGHOSTTY_VT_SYS_OPTIMIZE` to `Debug`, `ReleaseSafe`,
-`ReleaseFast`, or `ReleaseSmall` to override that choice explicitly.
+The other ways in, in the order the build script tries them:
 
-Vendored builds target Zig's portable `baseline` CPU so published binaries can
-run on older processors. For a binary that will run on the build machine, set
-`LIBGHOSTTY_VT_SYS_CPU=native`; a named Zig CPU model such as `x86_64_v3` can be
-used when all deployment machines support that target.
-
-The `pkg-config` path is opt-in. If you enable `libghostty-vt-sys/pkg-config`,
-the build will prefer an installed `libghostty-vt` discovered through
-`pkg-config` when `GHOSTTY_SOURCE_DIR` is unset. libghostty-vt is pre-1.0, so
-the checked-in bindings are expected to move with the pinned Ghostty source and
-do not guarantee compatibility with arbitrary installed C API revisions. An
-explicit `GHOSTTY_SOURCE_DIR` always wins.
+- `GHOSTTY_SOURCE_DIR`: build that Ghostty checkout with Zig 0.17 (on PATH, or
+  named by `ZIG`). This is the only path that runs Zig. Source builds derive the
+  optimize mode from Cargo's profile (override with `LIBGHOSTTY_VT_SYS_OPTIMIZE`)
+  and target the `baseline` CPU (override with `LIBGHOSTTY_VT_SYS_CPU`).
+  `GHOSTTY_ZIG_SYSTEM_DIR` passes a pre-fetched Zig package directory to
+  `zig build --system` for network-free builds.
+- `LIBGHOSTTY_VT_SYS_LIB_DIR`: link a directory holding `lib/` and `include/`.
+- The opt-in `libghostty-vt-sys/pkg-config` feature: an installed
+  `libghostty-vt`. libghostty-vt is pre-1.0, so the checked-in bindings move
+  with the pinned commit and do not promise compatibility with other revisions.
 
 Nix builds in this repository prefetch the pinned Ghostty source and Ghostty's
 Zig package dependencies up front, then set `GHOSTTY_SOURCE_DIR` and
-`GHOSTTY_ZIG_SYSTEM_DIR` for the Cargo build. Downstream Nix packaging should
-use the same contract rather than adding `git` or allowing network access in
-the sandbox.
+`GHOSTTY_ZIG_SYSTEM_DIR` for the Cargo build.
 
 By default, `libghostty-vt` and `libghostty-vt-sys` link `libghostty-vt.a`.
 This statically links the Ghostty VT archive, but the final binary may still
 depend on platform runtime libraries. To link the shared library instead,
-enable `libghostty-vt/link-dynamic`.
+enable `libghostty-vt/link-dynamic`, which needs a source build or
+`LIBGHOSTTY_VT_SYS_LIB_DIR`: the prebuilt archives are static only.
 
 ```sh
 nix develop

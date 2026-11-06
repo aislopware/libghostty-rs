@@ -1,0 +1,15 @@
+# Prebuilt libghostty-vt static libraries, one table per Rust target.
+#
+# Written by .github/workflows/prebuilt.yml; do not edit by hand. The
+# workflow builds the ghostty commit that build.rs pins, publishes each
+# library as the release asset <sha256>.tar.gz under the tag vt-<commit12>,
+# and rewrites this file. build.rs refuses a file whose ghostty commit is not
+# its pin, and a target with no table here, so a new pin fails loudly until
+# the workflow has run for it.
+#
+# [aarch64-apple-darwin]
+# url = "https://github.com/aislopware/libghostty-rs/releases/download/vt-<commit12>/<sha256>.tar.gz"
+# sha256 = "<sha256>"
+
+ghostty = "031685561440826283f81d5a6a4c4965e63e87bc"
+zig = "0.17.0"

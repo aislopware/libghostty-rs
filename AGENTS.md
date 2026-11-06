@@ -2,7 +2,8 @@
 
 ## Building
 
-- Requires Zig 0.17.x on PATH and a Nix dev shell
+- Links the prebuilt libghostty-vt that `crates/libghostty-vt-sys/prebuilt.toml` lists for the target (downloaded, sha256-checked, cached outside `target/`); no Zig needed
+- Zig 0.17.x only for a source build: set `GHOSTTY_SOURCE_DIR` to a Ghostty checkout (pin bumps, binding regeneration)
 - Enter dev shell: `nix develop`
 - Check: `cargo check`
 - Test: `cargo test -p libghostty-vt-sys`
@@ -15,9 +16,9 @@
 - Root Rust workspace: `libghostty-vt-sys` (FFI bindings), `libghostty-vt` (safe wrappers)
 - Examples workspace (`example/`, own lockfile and `example/target/`): `ghostling_rs`, `grid_ref_tracked_rs`
 - Opaque handles: own them as `alloc::Object<'alloc, ffi::FooImpl>` (borrowed ones as `alloc::Ref`) and free them in `Drop`
-- Sized structs: build them with `ffi::sized!(Type)`, which sets `size` to `size_of::<Type>()` before FFI calls
+- Sized structs (those whose first field is `size`): build them with `ffi::sized!(Type)`, which sets `size` to `size_of::<Type>()` before FFI calls. Frozen structs (callback payloads, `GridRef`, `Selection`, `Style`) have no `size`: use `Default` and read their fields directly
 - `from_result()` maps `GhosttyResult` to `Result<(), Error>`
-- Ghostty source is fetched at build time by `build.rs` (pinned commit). Override with `GHOSTTY_SOURCE_DIR` env var to use a local checkout.
+- The Ghostty pin is `GHOSTTY_COMMIT` in `build.rs`. A new pin is released by `.github/workflows/prebuilt.yml`, which fills `prebuilt.toml`; until then only `GHOSTTY_SOURCE_DIR` builds work. Never edit `prebuilt.toml` by hand
 - Comment heavily — explain *why*, not just *what*
 
 ## Issue and PR Guidelines

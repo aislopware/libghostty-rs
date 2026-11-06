@@ -13,8 +13,6 @@ build = "build.rs"
 doctest = false
 
 [features]
-default = ["vendored"]
-vendored = []
 pkg-config = ["dep:pkg-config"]
 link-dynamic = []
 bindgen-tool = ["dep:bindgen", "dep:libc", "dep:heck", "dep:syn", "dep:quote"]

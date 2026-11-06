@@ -1,0 +1,303 @@
+# Builds libghostty-vt from the ghostty commit build.rs pins, for every Rust
+# target the prebuilt path serves, publishes each static library as a release
+# asset named by its sha256, and commits crates/libghostty-vt-sys/prebuilt.toml
+# so build.rs can find, verify and cache them with no Zig on the machine.
+#
+# Runs when build.rs changes (a new pin) and by hand:
+#
+#   gh workflow run prebuilt.yml --ref <branch>
+#
+# Each archive is <sha256>.tar.gz holding lib/libghostty-vt.a, include/ghostty/**
+# and meta.toml. Archives are packed deterministically, so a rebuild of the same
+# bytes gives the same name. Assets are only ever added to the vt-<commit12>
+# release, never replaced: a manifest that once pointed at an asset keeps
+# pointing at the same bytes.
+name: Prebuilt libghostty-vt
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - crates/libghostty-vt-sys/build.rs
+
+# One publish per branch at a time, so two runs never race on the release or
+# on the manifest commit. A newer pin queues behind the running one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Reads the pin from build.rs, the one place it lives.
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      repo: ${{ steps.pin.outputs.repo }}
+      commit: ${{ steps.pin.outputs.commit }}
+      tag: ${{ steps.pin.outputs.tag }}
+      zig: ${{ steps.pin.outputs.zig }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the pin
+        id: pin
+        run: |
+          set -euo pipefail
+          file=crates/libghostty-vt-sys/build.rs
+          repo=$(sed -n 's/^const GHOSTTY_REPO: &str = "\(.*\)";$/\1/p' "$file")
+          commit=$(sed -n 's/^const GHOSTTY_COMMIT: &str = "\([0-9a-f]\{40\}\)";$/\1/p' "$file")
+          zig=$(sed -n 's/^const ZIG_VERSION: &str = "\(.*\)";$/\1/p' "$file")
+          if [[ -z "$repo" || -z "$commit" || -z "$zig" ]]; then
+            echo "error: could not read GHOSTTY_REPO, GHOSTTY_COMMIT and ZIG_VERSION from $file" >&2
+            exit 1
+          fi
+          {
+            echo "repo=$repo"
+            echo "commit=$commit"
+            echo "tag=vt-${commit:0:12}"
+            echo "zig=$zig"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: setup
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS aarch64
+            id: macos-aarch64
+            runner: macos-15
+            triples: aarch64-apple-darwin
+            # Native, as build.rs builds on an Apple silicon Mac, so Zig finds
+            # the runner's SDK; Ghostty sets the deployment target itself.
+            zig_args: -Demit-xcframework=false
+          # Both iOS slices come out of one xcframework emit, which is how
+          # build.rs builds iOS too: the flat -Dtarget=ios build cannot compile
+          # simdutf's NEON intrinsics for a generic baseline.
+          - name: iOS aarch64 and simulator
+            id: ios
+            runner: macos-15
+            triples: aarch64-apple-ios aarch64-apple-ios-sim
+            zig_args: -Demit-xcframework=true
+          # An explicit -Dtarget builds against Zig's bundled glibc headers at
+          # its default version rather than the runner's (2.39, whose headers
+          # redirect some calls to symbols only glibc 2.38 and later have), so
+          # the archive links on older distributions too.
+          - name: Linux x86_64
+            id: linux-x86_64
+            runner: ubuntu-24.04
+            triples: x86_64-unknown-linux-gnu
+            zig_args: -Demit-xcframework=false -Dtarget=x86_64-linux-gnu
+          - name: Linux aarch64
+            id: linux-aarch64
+            runner: ubuntu-24.04-arm
+            triples: aarch64-unknown-linux-gnu
+            zig_args: -Demit-xcframework=false -Dtarget=aarch64-linux-gnu
+    env:
+      GHOSTTY_REPO: ${{ needs.setup.outputs.repo }}
+      GHOSTTY_COMMIT: ${{ needs.setup.outputs.commit }}
+      ZIG_VERSION: ${{ needs.setup.outputs.zig }}
+      TRIPLES: ${{ matrix.triples }}
+    steps:
+      - name: Check out ghostty at the pin
+        run: |
+          set -euo pipefail
+          git init -q ghostty
+          git -C ghostty remote add origin "$GHOSTTY_REPO"
+          git -C ghostty fetch -q --depth 1 origin "$GHOSTTY_COMMIT"
+          git -C ghostty checkout -q FETCH_HEAD
+          zon=$(sed -n 's/.*minimum_zig_version = "\(.*\)".*/\1/p' ghostty/build.zig.zon)
+          if [[ "$zon" != "$ZIG_VERSION" ]]; then
+            echo "error: ghostty $GHOSTTY_COMMIT wants Zig $zon, build.rs says $ZIG_VERSION" >&2
+            exit 1
+          fi
+
+      # Its own cache holds the Zig global cache, where the packages
+      # deps/libghostty-vt.txt lists are fetched to; keying it by that list
+      # means a pin that keeps the same packages fetches nothing.
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: ${{ matrix.id }}-${{ hashFiles('ghostty/deps/libghostty-vt.txt') }}
+
+      # The same flags build.rs passes for a source build, at ReleaseFast for
+      # the baseline CPU: the prebuilt library serves every Cargo profile and
+      # every machine of the target.
+      - name: Build
+        working-directory: ghostty
+        run: |
+          set -euo pipefail
+          zig build -Demit-lib-vt=true -Doptimize=ReleaseFast -Dcpu=baseline \
+            -Dapp-runtime=none ${{ matrix.zig_args }} --prefix "$RUNNER_TEMP/prefix"
+
+      - name: Package
+        shell: python3 {0}
+        run: |
+          import gzip, hashlib, io, os, pathlib, shutil, subprocess, tarfile
+
+          prefix = pathlib.Path(os.environ["RUNNER_TEMP"], "prefix")
+          out = pathlib.Path(os.environ["RUNNER_TEMP"], "out")
+          out.mkdir()
+          slices = {"aarch64-apple-ios": "ios-arm64", "aarch64-apple-ios-sim": "ios-arm64-simulator"}
+          zig_version = subprocess.run(["zig", "version"], check=True, capture_output=True, text=True).stdout.strip()
+
+          for triple in os.environ["TRIPLES"].split():
+              stage = pathlib.Path(os.environ["RUNNER_TEMP"], "stage", triple)
+              (stage / "lib").mkdir(parents=True)
+              if triple in slices:
+                  # As build.rs's extract_xcframework_lib: the slice's archive and headers.
+                  src = prefix / "lib" / "ghostty-vt.xcframework" / slices[triple]
+                  shutil.copy(src / "libghostty-vt-fat.a", stage / "lib" / "libghostty-vt.a")
+                  shutil.copytree(src / "Headers", stage / "include")
+              else:
+                  shutil.copy(prefix / "lib" / "libghostty-vt.a", stage / "lib" / "libghostty-vt.a")
+                  shutil.copytree(prefix / "include", stage / "include")
+              if not (stage / "include" / "ghostty" / "vt.h").is_file():
+                  raise SystemExit(f"{triple}: no include/ghostty/vt.h")
+
+              # The deployment target the objects were built for, as the linker
+              # will see it, rather than a number copied from Ghostty's build.
+              minos = ""
+              if "apple" in triple:
+                  load = subprocess.run(["otool", "-l", str(stage / "lib" / "libghostty-vt.a")],
+                                        check=True, capture_output=True, text=True).stdout.split()
+                  for i, word in enumerate(load):
+                      if word == "minos":
+                          minos = load[i + 1]
+                          break
+
+              meta = [
+                  f'ghostty = "{os.environ["GHOSTTY_COMMIT"]}"',
+                  f'target = "{triple}"',
+                  f'zig = "{zig_version}"',
+                  'optimize = "ReleaseFast"',
+                  'cpu = "baseline"',
+                  f'os_version_min = "{minos}"',
+                  f'run = "{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}"',
+              ]
+              (stage / "meta.toml").write_text("\n".join(meta) + "\n")
+
+              # Deterministic: sorted entries, no times, owners or modes from
+              # the runner, and a gzip header without a timestamp. The same
+              # library and headers always give the same sha256, so a rerun
+              # names the asset that is already there.
+              raw = io.BytesIO()
+              with tarfile.open(fileobj=raw, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+                  for path in sorted(stage.rglob("*")):
+                      info = tar.gettarinfo(str(path), arcname=path.relative_to(stage).as_posix())
+                      info.mtime = 0
+                      info.uid = info.gid = 0
+                      info.uname = info.gname = ""
+                      info.mode = 0o755 if path.is_dir() else 0o644
+                      if path.is_file():
+                          with open(path, "rb") as f:
+                              tar.addfile(info, f)
+                      else:
+                          tar.addfile(info)
+              packed = io.BytesIO()
+              with gzip.GzipFile(fileobj=packed, mode="wb", compresslevel=9, mtime=0, filename="") as gz:
+                  gz.write(raw.getvalue())
+              data = packed.getvalue()
+              sha = hashlib.sha256(data).hexdigest()
+              (out / f"{sha}.tar.gz").write_bytes(data)
+              (out / f"{triple}.sha256").write_text(sha + "\n")
+              print(f"{triple}: {sha}.tar.gz ({len(data)} bytes), os_version_min={minos or 'n/a'}")
+
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: prebuilt-${{ matrix.id }}
+          path: ${{ runner.temp }}/out/*
+          if-no-files-found: error
+
+  publish:
+    needs: [setup, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GHOSTTY_COMMIT: ${{ needs.setup.outputs.commit }}
+      TAG: ${{ needs.setup.outputs.tag }}
+      ZIG_VERSION: ${{ needs.setup.outputs.zig }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: prebuilt-*
+          merge-multiple: true
+          path: dist
+
+      - name: Release the archives
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --latest=false \
+              --title "libghostty-vt ${GHOSTTY_COMMIT:0:12}" \
+              --notes "Static libghostty-vt built from ${GITHUB_SERVER_URL}/aislopware/ghostty/commit/${GHOSTTY_COMMIT} with Zig ${ZIG_VERSION}, ReleaseFast, baseline CPU. Each asset is <sha256>.tar.gz; crates/libghostty-vt-sys/prebuilt.toml maps Rust targets to them."
+          fi
+          existing=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          for archive in dist/*.tar.gz; do
+            name=$(basename "$archive")
+            # Never replace: the name is the content's hash, so an asset under
+            # it already holds these bytes.
+            if grep -qxF "$name" <<<"$existing"; then
+              echo "$name is already released"
+            else
+              gh release upload "$TAG" "$archive"
+            fi
+          done
+
+      - name: Commit prebuilt.toml
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --quiet origin "$GITHUB_REF_NAME"
+
+          # A newer pin landed while this ran: its own run fills the manifest,
+          # and this one must not write the old pin's libraries over it.
+          head=$(sed -n 's/^const GHOSTTY_COMMIT: &str = "\([0-9a-f]\{40\}\)";$/\1/p' crates/libghostty-vt-sys/build.rs)
+          if [[ "$head" != "$GHOSTTY_COMMIT" ]]; then
+            echo "The branch now pins $head; leaving prebuilt.toml to its run."
+            exit 0
+          fi
+
+          base="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          manifest=crates/libghostty-vt-sys/prebuilt.toml
+          {
+            echo "# Prebuilt libghostty-vt static libraries, one table per Rust target."
+            echo "#"
+            echo "# Written by .github/workflows/prebuilt.yml; do not edit by hand. Each url is"
+            echo "# a release asset named by its sha256. build.rs refuses a file whose ghostty"
+            echo "# commit is not its pin, and a target with no table here."
+            echo
+            echo "ghostty = \"$GHOSTTY_COMMIT\""
+            echo "zig = \"$ZIG_VERSION\""
+            # The glob expands sorted, so the tables are in target order.
+            for file in dist/*.sha256; do
+              triple=$(basename "$file" .sha256)
+              sha=$(tr -d '[:space:]' < "$file")
+              echo
+              echo "[$triple]"
+              echo "url = \"$base/$sha.tar.gz\""
+              echo "sha256 = \"$sha\""
+            done
+          } > "$manifest"
+
+          if git diff --quiet -- "$manifest"; then
+            echo "prebuilt.toml is already current"
+            exit 0
+          fi
+          git add "$manifest"
+          git commit -q -m "build: list the prebuilt libghostty-vt for ghostty ${GHOSTTY_COMMIT:0:12}" \
+            -m "Built by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          git push origin "HEAD:$GITHUB_REF_NAME"
