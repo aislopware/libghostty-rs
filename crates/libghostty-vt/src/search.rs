@@ -58,7 +58,9 @@
 //! formatters and render states, may share one terminal.
 //!
 //! The search and its terminal can be dropped in either order. Dropping the
-//! search first releases tracked state it holds within the terminal. If the
+//! search first hands it to the terminal, which releases the tracked state
+//! the search holds within it at its next write or when it is dropped, so a
+//! search can be dropped on a thread the terminal is not on. If the
 //! terminal is dropped first, the search detects this: calls that need the
 //! terminal, and [`Search::tick`], return [`Error::InvalidValue`], reads
 //! return whatever the search last saw, and dropping the search releases only
@@ -91,12 +93,15 @@
 //! # }
 //! ```
 
+use std::{marker::PhantomData, sync::Arc};
+
 use crate::{
     Terminal,
     alloc::{Allocator, Object},
     error::{Error, Result, from_optional_result, from_result},
     ffi,
     selection::Selection,
+    terminal::{Detached, DetachedHandle},
 };
 
 /// A search bound to one terminal.
@@ -144,20 +149,66 @@ use crate::{
 /// second.select_next(&mut terminal).unwrap();
 /// snapshot.selected_match().unwrap();
 /// ```
+///
+/// `'term` is the lifetime of the terminal's allocator. libghostty keeps the
+/// search and the terminal pointing at each other until one of them is freed,
+/// so the search may not outlive the memory of the terminal, even one that was
+/// leaked with [`std::mem::forget`] and never freed:
+///
+#[cfg_attr(
+    feature = "allocator_api",
+    doc = r"```compile_fail,E0505
+use libghostty_vt::{Terminal, alloc::Allocator, search::Search};
+let arena = allocator_api2::alloc::Global;
+let alloc = Allocator::from(&arena);
+let mut terminal = Terminal::new_with_alloc(&alloc, 8, 2).unwrap();
+let mut search = Search::new(&mut terminal).unwrap();
+std::mem::forget(terminal);
+drop(alloc); // Would free the terminal's memory under the search.
+search.tick().unwrap();
+```"
+)]
+///
+/// Likewise, the search's own memory must outlive the terminal, which detaches
+/// the search when it is freed, even if the search was leaked:
+///
+#[cfg_attr(
+    feature = "allocator_api",
+    doc = r"```compile_fail,E0505
+use libghostty_vt::{Terminal, alloc::Allocator, search::Search};
+let arena = allocator_api2::alloc::Global;
+let alloc = Allocator::from(&arena);
+let mut terminal = Terminal::new(8, 2).unwrap();
+let search = Search::new_with_alloc(&alloc, &mut terminal).unwrap();
+std::mem::forget(search);
+drop(alloc); // Would free the search's memory before the terminal detaches it.
+drop(terminal);
+```"
+)]
 #[derive(Debug)]
-pub struct Search<'alloc> {
+pub struct Search<'alloc: 'term, 'term> {
     inner: Object<'alloc, ffi::SearchImpl>,
-    // The native terminal this search was created with. Comparing addresses is
-    // enough to reject a different live terminal. A terminal allocated later at
-    // the same address cannot be mistaken for the original either: freeing the
-    // original detached this search, so libghostty rejects every call that
-    // would touch the new one, ticks included, and every match is read after
-    // such a call.
-    terminal: ffi::Terminal,
+    // The creating terminal's release queue, where the drop hands the search
+    // to be freed by the terminal. It doubles as the terminal's identity:
+    // held here, its allocation can't be reused by a later terminal, so
+    // comparing it rejects every other terminal, live or allocated where the
+    // original was.
+    detached: Arc<Detached>,
+    // Ties the search to the terminal's memory; see the type docs.
+    _terminal: PhantomData<&'term ()>,
 }
+
+// SAFETY: Every call on a search that touches its terminal takes
+// `&mut Terminal`, so it runs wherever the terminal is (`Terminal` is not
+// `Sync`). The others, `tick` and the reads, touch only search-owned state,
+// which search.h documents as safe while another thread modifies the
+// terminal. The drop hands the search to the terminal to free. Custom
+// allocators are `Sync`. Not `Sync`: calls on one search must not overlap.
+unsafe impl Send for Search<'_, '_> {}
 
 /// Progress state of a search.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, int_enum::IntEnum)]
+#[non_exhaustive]
 #[repr(i32)]
 pub enum Status {
     /// [`Search::tick`] can make progress without feeding.
@@ -175,6 +226,7 @@ pub enum Status {
 /// Scroll policy applied when a match becomes selected via
 /// [`Search::select_next`] or [`Search::select_prev`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, int_enum::IntEnum)]
+#[non_exhaustive]
 #[repr(i32)]
 pub enum Scroll {
     /// Scroll the viewport so the match is visible, only if it is not
@@ -185,13 +237,13 @@ pub enum Scroll {
     None = ffi::SearchScroll::NONE,
 }
 
-impl<'alloc> Search<'alloc> {
+impl<'alloc: 'term, 'term> Search<'alloc, 'term> {
     /// Create a search bound to a terminal.
     ///
     /// The search starts idle with no needle: it reports [`Status::Complete`]
     /// and finds nothing. Set a needle with [`Self::set_needle`] to start
     /// searching.
-    pub fn new(terminal: &mut Terminal<'_, '_>) -> Result<Self> {
+    pub fn new(terminal: &mut Terminal<'term, '_>) -> Result<Self> {
         // SAFETY: A NULL allocator is always valid
         unsafe { Self::new_inner(terminal, std::ptr::null()) }
     }
@@ -201,15 +253,15 @@ impl<'alloc> Search<'alloc> {
     /// See the [crate-level documentation](crate#memory-management-and-lifetimes)
     /// regarding custom memory management and lifetimes.
     pub fn new_with_alloc<'ctx: 'alloc>(
-        terminal: &mut Terminal<'_, '_>,
         alloc: &'alloc Allocator<'ctx>,
+        terminal: &mut Terminal<'term, '_>,
     ) -> Result<Self> {
         // SAFETY: Borrow checking should forbid invalid allocators
         unsafe { Self::new_inner(terminal, alloc.to_raw()) }
     }
 
     unsafe fn new_inner(
-        terminal: &mut Terminal<'_, '_>,
+        terminal: &mut Terminal<'term, '_>,
         alloc: *const ffi::Allocator,
     ) -> Result<Self> {
         let mut raw = std::ptr::null_mut();
@@ -220,12 +272,13 @@ impl<'alloc> Search<'alloc> {
         })?;
         Ok(Self {
             inner: Object::new(raw)?,
-            terminal: terminal.inner.as_raw(),
+            detached: Arc::clone(terminal.detached()),
+            _terminal: PhantomData,
         })
     }
 
     fn check_terminal(&self, terminal: &Terminal<'_, '_>) -> Result<()> {
-        if terminal.inner.as_raw() == self.terminal {
+        if Arc::ptr_eq(&self.detached, terminal.detached()) {
             Ok(())
         } else {
             Err(Error::InvalidValue)
@@ -400,12 +453,12 @@ impl<'alloc> Search<'alloc> {
     fn select(
         &mut self,
         terminal: &mut Terminal<'_, '_>,
-        key: ffi::SearchOption::Type,
+        select: unsafe extern "C" fn(ffi::Search) -> ffi::Result::Type,
     ) -> Result<bool> {
         self.check_terminal(terminal)?;
-        // SAFETY: The value must be NULL, and the exclusive terminal borrow
+        // SAFETY: The search is live, and the exclusive terminal borrow
         // serializes reading and scrolling it.
-        let result = unsafe { ffi::ghostty_search_set(self.inner.as_raw(), key, std::ptr::null()) };
+        let result = unsafe { select(self.inner.as_raw()) };
         Ok(from_optional_result(result, ())?.is_some())
     }
 
@@ -418,14 +471,14 @@ impl<'alloc> Search<'alloc> {
     /// match according to [`Self::set_scroll`]. Returns `false` when there
     /// are no matches.
     pub fn select_next(&mut self, terminal: &mut Terminal<'_, '_>) -> Result<bool> {
-        self.select(terminal, ffi::SearchOption::SELECT_NEXT)
+        self.select(terminal, ffi::ghostty_search_select_next)
     }
 
     /// Select the previous match, moving toward newer content, wrapping
     /// around past the newest match. Otherwise identical to
     /// [`Self::select_next`].
     pub fn select_prev(&mut self, terminal: &mut Terminal<'_, '_>) -> Result<bool> {
-        self.select(terminal, ffi::SearchOption::SELECT_PREV)
+        self.select(terminal, ffi::ghostty_search_select_prev)
     }
 
     /// Feed the search, then borrow its matches together with the terminal.
@@ -435,7 +488,7 @@ impl<'alloc> Search<'alloc> {
     pub fn snapshot<'s, 'ta: 'cb, 'cb>(
         &'s mut self,
         terminal: &'s mut Terminal<'ta, 'cb>,
-    ) -> Result<Snapshot<'s, 'alloc, 'ta, 'cb>> {
+    ) -> Result<Snapshot<'s, 'alloc, 'term, 'ta, 'cb>> {
         self.feed(terminal)?;
         Ok(Snapshot {
             search: self,
@@ -444,24 +497,17 @@ impl<'alloc> Search<'alloc> {
     }
 }
 
-impl Drop for Search<'_> {
+impl Drop for Search<'_, '_> {
     fn drop(&mut self) {
-        // SAFETY: libghostty releases tracked state within a live terminal,
-        // or only search-owned memory once the terminal was freed.
-        //
-        // Releasing that state must be serialized with all other access to
-        // the terminal. The terminal is not shared across threads, so the
-        // only other access that can be in progress is a VT write, when a
-        // search is dropped from one of the terminal's effect callbacks. That
-        // is fine too: releasing only unregisters the search from the
-        // terminal and untracks its pins. Effect callbacks are invoked by the
-        // stream handler while it handles a sequence, never from within a
-        // page list operation, so the terminal isn't iterating its searches
-        // or tracked pins at that point, and it never holds on to the pins
-        // this search owns. Upstream likewise only forbids re-entering VT
-        // writes from callbacks, and expects other terminal calls, such as
-        // updating a render state, to be made from them.
-        unsafe { ffi::ghostty_search_free(self.inner.as_raw()) };
+        // Freeing releases tracked state within a live terminal, which must
+        // be serialized with all other access to it, and the terminal may be
+        // busy on another thread. Hand the search over: the terminal frees it
+        // at its next write or when it is dropped, or it is freed right here
+        // once the terminal is gone (then libghostty frees only search-owned
+        // memory). Either way the free runs within the allocator's `'alloc`,
+        // which outlives the terminal's `'term`.
+        self.detached
+            .release(DetachedHandle::Search(self.inner.ptr));
     }
 }
 
@@ -469,12 +515,12 @@ impl Drop for Search<'_> {
 ///
 /// Created by [`Search::snapshot`].
 #[derive(Debug)]
-pub struct Snapshot<'s, 'alloc, 'ta: 'cb, 'cb> {
-    search: &'s Search<'alloc>,
+pub struct Snapshot<'s, 'alloc: 'term, 'term, 'ta: 'cb, 'cb> {
+    search: &'s Search<'alloc, 'term>,
     terminal: &'s Terminal<'ta, 'cb>,
 }
 
-impl<'ta: 'cb, 'cb> Snapshot<'_, '_, 'ta, 'cb> {
+impl<'ta: 'cb, 'cb> Snapshot<'_, '_, '_, 'ta, 'cb> {
     /// The terminal that produced these matches.
     #[must_use]
     pub fn terminal(&self) -> &Terminal<'ta, 'cb> {
@@ -483,7 +529,7 @@ impl<'ta: 'cb, 'cb> Snapshot<'_, '_, 'ta, 'cb> {
 
     /// The selected match, or `None` when nothing is selected.
     pub fn selected_match(&self) -> Result<Option<Selection<'_>>> {
-        let mut raw = ffi::sized!(ffi::Selection);
+        let mut raw = ffi::Selection::default();
         // SAFETY: Reading only touches search-owned memory.
         let result = unsafe {
             ffi::ghostty_search_get(
@@ -521,20 +567,15 @@ impl<'ta: 'cb, 'cb> Snapshot<'_, '_, 'ta, 'cb> {
             };
             if result == ffi::Result::OUT_OF_SPACE {
                 // Growing is only needed when the storage is too small, so
-                // existing capacity is reused on later snapshots. Guard
-                // against looping forever if the reported size doesn't grow.
-                if buffer.len <= storage.inner.len() {
-                    return Err(Error::InvalidValue);
-                }
-                storage
-                    .inner
-                    .resize(buffer.len, ffi::sized!(ffi::Selection));
+                // existing capacity is reused on later snapshots.
+                // libghostty reports the required length, which is larger.
+                storage.inner.resize(buffer.len, ffi::Selection::default());
                 continue;
             }
             from_result(result)?;
             // Never expose stale entries left over from an earlier, longer
-            // read.
-            let values = storage.inner.get(..buffer.len).ok_or(Error::InvalidValue)?;
+            // read. On success libghostty wrote `len <= cap` entries.
+            let values = &storage.inner[..buffer.len];
             return Ok(Matches {
                 inner: values.iter(),
             });
@@ -649,10 +690,9 @@ impl std::iter::FusedIterator for Matches<'_> {}
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
-    use crate::terminal::ScrollViewport;
 
     /// Drive a search with feeds and ticks, as an interactive embedder would.
-    fn drive(search: &mut Search<'_>, terminal: &mut Terminal<'_, '_>) {
+    fn drive(search: &mut Search<'_, '_>, terminal: &mut Terminal<'_, '_>) {
         loop {
             search.feed(terminal).unwrap();
             let mut status = search.status().unwrap();
@@ -800,10 +840,6 @@ mod tests {
 
         assert_eq!(select(Scroll::None), bottom);
         assert_eq!(select(Scroll::IfNeeded), 0);
-
-        // Scrolling back down is the embedder's call.
-        terminal.scroll_viewport(ScrollViewport::Bottom);
-        assert_eq!(terminal.scrollbar().unwrap().offset, bottom);
     }
 
     #[test]
@@ -855,8 +891,8 @@ mod tests {
 
     /// Fill a terminal with enough matching lines that the search has
     /// scrollback history to search, not just the active area.
-    #[cfg(unix)]
-    fn history_search(terminal: &mut Terminal<'_, '_>) -> Search<'static> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn history_search<'t>(terminal: &mut Terminal<'t, '_>) -> Search<'static, 't> {
         for _ in 0..5000 {
             terminal.vt_write(b"hit\r\n");
         }
@@ -870,7 +906,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn ticking_after_terminal_drop_is_rejected() {
         let alloc = crate::alloc::testing::Guard::allocator();
 
@@ -895,24 +931,26 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn search_can_be_dropped_from_an_effect_callback() {
         let alloc = crate::alloc::testing::Guard::allocator();
-        let slot = std::cell::RefCell::new(None);
+        let slot = crate::sync_cell::RefCell::new(None);
         let mut terminal = Terminal::new_with_alloc(&alloc, 10, 3).unwrap();
         terminal
             .on_bell(|_| drop(slot.borrow_mut().take()))
             .unwrap();
         *slot.borrow_mut() = Some(history_search(&mut terminal));
 
-        // Release the search's tracked pins in the middle of a write that
-        // keeps growing the scrollback.
+        // Drop the search in the middle of a write that keeps growing the
+        // scrollback. The drop only queues it; the terminal frees it and its
+        // tracked pins at the start of the next write.
         let mut input = b"\x07".to_vec();
         for _ in 0..5000 {
             input.extend_from_slice(b"hit\r\n");
         }
         terminal.vt_write(&input);
         assert!(slot.borrow().is_none());
+        terminal.vt_write(b"hit\r\n");
 
         // The terminal's remaining tracked state is intact.
         let mut search = Search::new(&mut terminal).unwrap();

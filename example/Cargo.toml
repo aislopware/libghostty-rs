@@ -6,9 +6,11 @@
 # Listed explicitly rather than as a `*` glob: the glob also matches
 # example/target/ once anything has been built, and Cargo then refuses to
 # load the workspace at all.
-members = ["ghostling_rs", "grid_ref_tracked_rs"]
+members = ["ghostling_rs", "grid_ref_tracked_rs", "wasm_rs"]
 resolver = "2"
 
+# Keep these in sync with the root Cargo.toml, which can't be inherited
+# across workspaces.
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"

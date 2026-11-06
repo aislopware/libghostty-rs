@@ -1,5 +1,5 @@
-//! Handling various protocols pioneered by Kitty,
-//! including the [Kitty graphics protocol](graphics).
+//! Handling various protocols pioneered by Kitty, including the
+//! [Kitty graphics protocol](graphics).
 
 pub mod graphics;
 

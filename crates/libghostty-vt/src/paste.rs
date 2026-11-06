@@ -29,8 +29,8 @@
 //! produced, never in one piece. The callback may be invoked several times for
 //! a single paste; the pieces must be written to the pty in order.
 //!
-//! Text that could inject commands (a newline when unbracketed, or the
-//! bracketed paste terminator when bracketed) is refused with
+//! Text that could inject commands (a newline or carriage return when
+//! unbracketed, or the bracketed paste terminator when bracketed) is refused with
 //! [`Error::Rejected`](crate::Error::Rejected) and nothing written unless
 //! [`Options::with_allow_unsafe`] is set. The usual flow is to call once,
 //! confirm with the user on [`Error::Rejected`](crate::Error::Rejected), and call again with
@@ -116,11 +116,14 @@ use crate::{
 /// Check if paste data is safe to paste into the terminal.
 ///
 /// Data is considered unsafe if it contains:
-///   * Newlines (`\n`) which can inject commands
+///   * Line terminators (`\n` or `\r`) which can inject commands. A carriage return is what the
+///     Enter key sends, so it is as dangerous as a newline on an unbracketed paste.
 ///   * The bracketed paste end sequence (`\x1b[201~`) which can be used to exit bracketed paste
 ///     mode and inject commands
 ///
 /// This check is conservative and considers data unsafe regardless of current terminal state.
+/// [`Terminal::paste`] applies the terminal-state-aware rule itself (line terminators are safe
+/// inside a bracketed paste); use this to apply the stricter rule on top.
 #[must_use]
 pub fn is_safe(data: &str) -> bool {
     unsafe { ffi::ghostty_paste_is_safe(data.as_ptr().cast(), data.len()) }
@@ -140,8 +143,11 @@ pub fn is_safe(data: &str) -> bool {
 /// output buffer.
 ///
 /// If the output buffer is too small, the function returns
-/// `Err(Error::OutOfSpace { required })` where `required` is the required
+/// `Err(Error::OutOfSpace { required })` where `required` is the required size.
 /// The caller can then retry with a sufficiently sized buffer.
+///
+/// This is the encoder [`Terminal::paste`] uses for a text paste;
+/// use it directly when there is no terminal to paste into.
 pub fn encode(data: &mut [u8], bracketed: bool, buf: &mut [u8]) -> Result<usize> {
     let mut written = 0usize;
     let result = unsafe {
@@ -157,23 +163,26 @@ pub fn encode(data: &mut [u8], bracketed: bool, buf: &mut [u8]) -> Result<usize>
     from_result_with_len(result, written)
 }
 
-/// Why this paste happened.
+/// Why a paste happened.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, int_enum::IntEnum)]
 #[repr(i32)]
 #[non_exhaustive]
 pub enum Source {
-    /// A user action such as a paste keybind, menu item, or middle click.
+    /// The user pasted from a clipboard: keybind, menu, middle click.
     #[default]
     Clipboard = ffi::PasteSource::CLIPBOARD,
-    /// Programmatic text insertion. This never produces a Kitty paste event.
+    /// Text inserted some other way: IME commit, drag and drop, scripted
+    /// input. Always written as text, never as a paste event, matching kitty.
+    /// This is not a way to opt out of paste events; an embedder that doesn't
+    /// want them doesn't install a
+    /// [clipboard read callback](Terminal::on_clipboard_read).
     Text = ffi::PasteSource::TEXT,
 }
 
 /// Options for [`Terminal::paste`].
 ///
-/// This wraps the sized C request directly, so new upstream fields don't need
-/// a second Rust representation. The MIME types and the reader are passed to
-/// [`Terminal::paste`] instead, since they are only borrowed for that call.
+/// The MIME types and the reader are passed to [`Terminal::paste`] instead,
+/// since they are only borrowed for that call.
 #[derive(Clone, Copy, Debug)]
 pub struct Options {
     inner: ffi::Paste,
@@ -248,7 +257,11 @@ impl Terminal<'_, '_> {
     /// passed through exactly as given there (the same pointer and length),
     /// so the reader may identify the representation by pointer (e.g. with
     /// [`std::ptr::eq`]) or by content. An error from the reader fails the
-    /// paste with [`Error::IoError`](crate::Error::IoError).
+    /// paste with [`Error::IoError`](crate::Error::IoError). If the writer
+    /// refuses a write, the paste fails with
+    /// [`Error::OutOfMemory`](crate::Error::OutOfMemory) instead, even if the
+    /// reader ignores that error. The reader runs inside a call from
+    /// libghostty, so a panic in it aborts the process.
     ///
     /// A paste event records a session grant for its one-time password only
     /// once the event is written; a failed call never leaves a grant for an
@@ -266,16 +279,18 @@ impl Terminal<'_, '_> {
     ///   [`Options::with_allow_unsafe`] is not set.
     /// - [`Error::InvalidValue`](crate::Error::InvalidValue) if no pty write callback is installed.
     /// - [`Error::IoError`](crate::Error::IoError) if the reader failed, or if there is no secure
-    ///   entropy source to mint a paste event password.
-    /// - [`Error::OutOfMemory`](crate::Error::OutOfMemory).
+    ///   entropy source to mint a paste event password (see
+    ///   [`set_secure_random_source`](crate::sys::set_secure_random_source)).
+    /// - [`Error::OutOfMemory`](crate::Error::OutOfMemory), including when the
+    ///   writer refused a write, which only happens when it can't allocate.
     pub fn paste<F>(
         &mut self,
         options: Options,
         mimes: &[ClipboardMime<'_>],
-        mut reader: F,
+        reader: F,
     ) -> Result<bool>
     where
-        F: FnMut(&str, &mut dyn Write) -> std::io::Result<()>,
+        F: FnOnce(&str, &mut dyn Write) -> std::io::Result<()>,
     {
         unsafe extern "C" fn read<F>(
             userdata: *mut c_void,
@@ -283,17 +298,29 @@ impl Terminal<'_, '_> {
             writer: ffi::Writer,
         ) -> bool
         where
-            F: FnMut(&str, &mut dyn Write) -> std::io::Result<()>,
+            F: FnOnce(&str, &mut dyn Write) -> std::io::Result<()>,
         {
             // SAFETY: `userdata` is the reader, which `paste` exclusively
             // borrows for the duration of the call.
-            let reader = unsafe { &mut *userdata.cast::<F>() };
+            let reader = unsafe { &mut *userdata.cast::<Option<F>>() };
+            // libghostty calls the reader at most once per paste.
+            let Some(reader) = reader.take() else {
+                return false;
+            };
             // SAFETY: libghostty passes back an entry of `mimes` exactly as
             // given (the same pointer and length), and every `ClipboardMime`
             // was created from a `&str`.
             let mime = unsafe { mime.to_str() };
-            reader(mime, &mut PasteWriter(writer)).is_ok()
+            let mut writer = PasteWriter {
+                writer,
+                refused: false,
+            };
+            // libghostty fails the paste after any refused write, even if
+            // the reader ignores the error and returns `Ok`.
+            reader(mime, &mut writer).is_ok()
         }
+
+        let mut reader = Some(reader);
 
         let raw = ffi::Paste {
             // `ClipboardMime` is `repr(transparent)` over `ffi::String`, so
@@ -318,19 +345,25 @@ impl Terminal<'_, '_> {
 
 // Only ever handed to the reader as `&mut dyn Write`, so the libghostty writer
 // cannot escape the reader call it is valid for.
-struct PasteWriter(ffi::Writer);
+struct PasteWriter {
+    writer: ffi::Writer,
+    // Upstream requires the reader to stop after a refused write, so refuse
+    // every write after the first refused one.
+    refused: bool,
+}
 
 impl Write for PasteWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         let write = self
-            .0
+            .writer
             .write
-            .ok_or_else(|| std::io::Error::other("missing paste writer"))?;
+            .expect("libghostty passed a writer without a write function - this is a bug!");
         // SAFETY: libghostty's writer is valid for the duration of the reader
         // call, which is the only time a `PasteWriter` exists.
-        if unsafe { write(self.0.userdata, bytes.as_ptr(), bytes.len()) } {
+        if !self.refused && unsafe { write(self.writer.userdata, bytes.as_ptr(), bytes.len()) } {
             Ok(bytes.len())
         } else {
+            self.refused = true;
             Err(std::io::Error::other("paste writer rejected output"))
         }
     }
@@ -347,7 +380,8 @@ mod tests {
         Error,
         terminal::{ClipboardReadError, Mode},
     };
-    use std::cell::{Cell, RefCell};
+    // `Sync` stand-ins: effect callbacks must be `Send`.
+    use crate::sync_cell::{Cell, RefCell};
 
     const TEXT: [ClipboardMime<'static>; 1] = [ClipboardMime::new("text/plain")];
 
@@ -421,11 +455,24 @@ mod tests {
         assert!(result.unwrap());
         assert_eq!(*output.borrow(), b"a\rb");
 
-        // Bracketed: newlines are safe, but the end sequence is not.
+        // So could a lone carriage return, since it is what Enter sends. It
+        // is passed through as is.
+        assert!(!is_safe("a\rb"));
+        let (result, _) = paste(&mut terminal, &output, Options::new(), &TEXT, b"a\rb");
+        assert!(matches!(result, Err(Error::Rejected)));
+        assert!(output.borrow().is_empty());
+        let (result, _) = paste(&mut terminal, &output, options, &TEXT, b"a\rb");
+        assert!(result.unwrap());
+        assert_eq!(*output.borrow(), b"a\rb");
+
+        // Bracketed: line terminators are safe, but the end sequence is not.
         terminal.set_mode(Mode::BRACKETED_PASTE, true).unwrap();
         let (result, _) = paste(&mut terminal, &output, Options::new(), &TEXT, b"a\nb");
         assert!(result.unwrap());
         assert_eq!(*output.borrow(), b"\x1b[200~a\nb\x1b[201~");
+        let (result, _) = paste(&mut terminal, &output, Options::new(), &TEXT, b"a\rb");
+        assert!(result.unwrap());
+        assert_eq!(*output.borrow(), b"\x1b[200~a\rb\x1b[201~");
         let (result, _) = paste(
             &mut terminal,
             &output,
@@ -445,7 +492,7 @@ mod tests {
         // Without a pty write callback there is nowhere to paste to.
         let (result, reads) = paste(&mut terminal, &output, Options::new(), &TEXT, b"hi");
         assert!(matches!(result, Err(Error::InvalidValue)));
-        assert!(reads.is_empty());
+        assert_eq!(reads, Vec::<String>::new());
 
         terminal
             .on_pty_write(|_term, bytes| output.borrow_mut().extend_from_slice(bytes))
@@ -454,11 +501,11 @@ mod tests {
         // No MIME types, or only non-text ones, is nothing to paste.
         let (result, reads) = paste(&mut terminal, &output, Options::new(), &[], b"");
         assert!(!result.unwrap());
-        assert!(reads.is_empty());
+        assert_eq!(reads, Vec::<String>::new());
         let png = [ClipboardMime::new("image/png")];
         let (result, reads) = paste(&mut terminal, &output, Options::new(), &png, b"png");
         assert!(!result.unwrap());
-        assert!(reads.is_empty());
+        assert_eq!(reads, Vec::<String>::new());
         // An empty text representation is nothing to paste either.
         let (result, _) = paste(&mut terminal, &output, Options::new(), &TEXT, b"");
         assert!(!result.unwrap());
@@ -470,6 +517,32 @@ mod tests {
             Err(std::io::Error::other("clipboard went away"))
         });
         assert!(matches!(result, Err(Error::IoError)));
+        assert!(output.borrow().is_empty());
+    }
+
+    /// A reader that ignores a refused write must not paste the rest.
+    #[test]
+    fn refused_writes_fail_the_paste_even_if_ignored() {
+        let capped = crate::alloc::testing::Capped::new(1024 * 1024);
+        let alloc = capped.allocator();
+        let output = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new_with_alloc(&alloc, 80, 24).unwrap();
+        terminal
+            .on_pty_write(|_term, bytes| output.borrow_mut().extend_from_slice(bytes))
+            .unwrap();
+
+        let after_refused = Cell::new(false);
+        let result = terminal.paste(Options::new(), &TEXT, |_mime, out| {
+            out.write_all(b"before ")?;
+            // Too big for the allocator, so the writer refuses it. A reader
+            // that drops that error and carries on...
+            let _ = out.write_all(&vec![b'x'; 4 * 1024 * 1024]);
+            // ...can't write anything else either.
+            after_refused.set(out.write_all(b"after").is_err());
+            Ok(())
+        });
+        assert!(after_refused.get());
+        assert!(matches!(result, Err(Error::OutOfMemory)));
         assert!(output.borrow().is_empty());
     }
 
@@ -553,7 +626,7 @@ mod tests {
         // would be unsafe unbracketed is not rejected, and is not even read.
         let (result, reads) = paste(&mut terminal, &output, Options::new(), &TEXT, b"a\n");
         assert!(result.unwrap());
-        assert!(reads.is_empty());
+        assert_eq!(reads, Vec::<String>::new());
         assert!(
             output
                 .borrow()

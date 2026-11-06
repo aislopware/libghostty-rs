@@ -15,6 +15,13 @@ use crate::{
     ffi,
 };
 
+/// The vtable's reserved slots, which libghostty-vt requires to be NULL so that
+/// it can add operations later without breaking the ABI. A named const keeps
+/// every vtable literal promotable to `'static` (a call to `null_mut` in a
+/// function body would not be), and a `const` vtable rather than a `static`
+/// because the raw pointers make the struct `!Sync`.
+pub(crate) const RESERVED_VTABLE_SLOTS: [*mut c_void; 4] = [std::ptr::null_mut(); 4];
+
 /// A custom allocator that libghostty uses for its memory allocations.
 ///
 /// The allocator may depend on some external state for the
@@ -34,6 +41,12 @@ impl Allocator<'_> {
     pub(crate) fn to_raw(&self) -> *const ffi::Allocator {
         std::ptr::from_ref(&self.inner)
     }
+    /// Copy an allocator that libghostty passed in.
+    ///
+    /// # Safety
+    ///
+    /// `raw` must point to a valid allocator, and the state behind its
+    /// context pointer must outlive the result.
     pub(crate) unsafe fn from_raw(raw: *const ffi::Allocator) -> Self {
         Self {
             inner: unsafe { *raw },
@@ -102,7 +115,8 @@ impl<'alloc> Bytes<'alloc> {
 
     /// Allocate `len` zeroed bytes with a custom allocator.
     ///
-    /// Not really useful except in very niche cases.
+    /// Rarely needed, except by a PNG decoder, which must allocate its output
+    /// with this.
     pub fn new_with_alloc<'ctx: 'alloc>(
         alloc: &'alloc Allocator<'ctx>,
         len: usize,
@@ -129,6 +143,12 @@ impl<'alloc> Bytes<'alloc> {
         // SAFETY: `ghostty_alloc` returned a non-null allocation of `len` bytes.
         unsafe { ptr.as_ptr().write_bytes(0, len) };
         Ok(unsafe { Self::from_raw_parts(ptr.as_ptr(), len, alloc) })
+    }
+
+    /// The allocator these bytes will be freed with, as passed to
+    /// libghostty (NULL for the default allocator).
+    pub(crate) fn allocator(&self) -> *const ffi::Allocator {
+        self.alloc
     }
 
     /// Take ownership of a buffer allocated by libghostty.
@@ -227,6 +247,7 @@ impl Allocator<'static> {
             vtable: &ffi::AllocatorVtable {
                 alloc: Some(_global_alloc),
                 free: Some(_global_free),
+                reserved: RESERVED_VTABLE_SLOTS,
                 resize: Some(_global_resize),
                 remap: Some(_global_remap),
             },
@@ -288,15 +309,27 @@ unsafe extern "C" fn _global_remap(
 //------------------------------------
 
 /// Adapt a Rust Allocator into a libghostty Allocator.
+///
+/// libghostty calls back into the allocator through a pointer to it, so the
+/// allocator is borrowed for `'ctx` rather than moved in: a moved-in value
+/// would live in this function's stack frame and be gone by the first call.
+///
+/// The allocator must be `Sync`: libghostty calls it from whichever thread
+/// uses a handle created with it, and a [`Terminal`](crate::Terminal) can
+/// move to another thread while other handles sharing the allocator stay.
+/// Wrap a single-threaded allocator in a lock to use it.
 #[cfg(feature = "allocator_api")]
-impl<'ctx, A: alloc::Allocator + 'ctx> From<A> for Allocator<'ctx> {
-    fn from(value: A) -> Self {
+impl<'ctx, A: alloc::Allocator + Sync> From<&'ctx A> for Allocator<'ctx> {
+    fn from(value: &'ctx A) -> Self {
         Self {
             inner: ffi::Allocator {
-                ctx: std::ptr::from_ref(value.by_ref()) as *mut std::ffi::c_void,
+                ctx: std::ptr::from_ref(value)
+                    .cast_mut()
+                    .cast::<std::ffi::c_void>(),
                 vtable: &ffi::AllocatorVtable {
                     alloc: Some(_alloc::<A>),
                     free: Some(_free::<A>),
+                    reserved: RESERVED_VTABLE_SLOTS,
                     resize: Some(_resize),
                     remap: Some(_remap::<A>),
                 },
@@ -317,8 +350,7 @@ unsafe extern "C" fn _alloc<A: alloc::Allocator>(
 
     unsafe { get_allocator::<A>(allocator) }
         .and_then(|alloc| alloc.allocate(layout?).ok())
-        .map(|p| p.as_ptr().cast::<c_void>())
-        .unwrap_or(std::ptr::null_mut())
+        .map_or(std::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>())
 }
 
 #[cfg(feature = "allocator_api")]
@@ -382,8 +414,7 @@ unsafe extern "C" fn _remap<A: alloc::Allocator>(
                 unsafe { alloc.grow(mem?, old_layout?, new_layout?) }.ok()
             }
         })
-        .map(|p| p.as_ptr().cast::<c_void>())
-        .unwrap_or(std::ptr::null_mut())
+        .map_or(std::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>())
 }
 
 /// Get the allocator back from a vtable function.
@@ -397,7 +428,7 @@ unsafe extern "C" fn _remap<A: alloc::Allocator>(
 /// Undefined Behavior.
 ///
 /// The returned allocator must **never** be smuggled outside the lifetime of the caller.
-#[inline(always)]
+#[inline]
 #[cfg(feature = "allocator_api")]
 unsafe fn get_allocator<'a, A: alloc::Allocator>(ptr: *mut c_void) -> Option<&'a A> {
     unsafe { ptr.cast::<A>().as_ref() }
@@ -405,17 +436,22 @@ unsafe fn get_allocator<'a, A: alloc::Allocator>(ptr: *mut c_void) -> Option<&'a
 
 /// Custom allocators for tests that need to observe or constrain what
 /// libghostty allocates.
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 pub(crate) mod testing {
-    use std::{cell::Cell, ffi::c_void};
+    use std::{
+        ffi::c_void,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
-    use super::Allocator;
+    use super::{Allocator, RESERVED_VTABLE_SLOTS};
     use crate::ffi;
 
     /// Turn a test allocator's state and vtable into an [`Allocator`].
     ///
     /// Every vtable entry must be set: libghostty calls them unconditionally.
-    fn allocator<'a, T>(ctx: &'a T, vtable: &'static ffi::AllocatorVtable) -> Allocator<'a> {
+    /// The state is `Sync`, like every allocator a terminal may use, since a
+    /// terminal can move to another thread.
+    fn allocator<'a, T: Sync>(ctx: &'a T, vtable: &'static ffi::AllocatorVtable) -> Allocator<'a> {
         let raw = ffi::Allocator {
             ctx: std::ptr::from_ref(ctx).cast_mut().cast(),
             vtable: &raw const *vtable,
@@ -457,30 +493,32 @@ pub(crate) mod testing {
     /// request, like the limit libghostty places on some callbacks.
     pub(crate) struct Capped {
         cap: usize,
-        largest_request: Cell<usize>,
+        largest_request: AtomicUsize,
     }
 
     impl Capped {
         pub(crate) fn new(cap: usize) -> Self {
             Self {
                 cap,
-                largest_request: Cell::new(0),
+                largest_request: AtomicUsize::new(0),
             }
         }
 
         pub(crate) fn allocator(&self) -> Allocator<'_> {
-            static VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
+            const VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
                 alloc: Some(capped_alloc),
                 resize: Some(no_resize),
                 remap: Some(no_remap),
                 free: Some(heap_free),
+                reserved: RESERVED_VTABLE_SLOTS,
             };
             allocator(self, &VTABLE)
         }
 
         /// The largest allocation requested so far, including refused ones.
+        #[cfg(all(feature = "kitty-graphics", feature = "png"))]
         pub(crate) fn largest_request(&self) -> usize {
-            self.largest_request.get()
+            self.largest_request.load(Ordering::Relaxed)
         }
     }
 
@@ -492,8 +530,7 @@ pub(crate) mod testing {
     ) -> *mut c_void {
         // SAFETY: `ctx` is the `Capped` the allocator borrows.
         let this = unsafe { &*ctx.cast::<Capped>() };
-        this.largest_request
-            .set(this.largest_request.get().max(len));
+        this.largest_request.fetch_max(len, Ordering::Relaxed);
         if len > this.cap {
             return std::ptr::null_mut();
         }
@@ -505,23 +542,24 @@ pub(crate) mod testing {
     /// Tracks how many bytes libghostty holds through the allocator.
     #[derive(Default)]
     pub(crate) struct Counting {
-        live: Cell<usize>,
+        live: AtomicUsize,
     }
 
     impl Counting {
         pub(crate) fn allocator(&self) -> Allocator<'_> {
-            static VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
+            const VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
                 alloc: Some(counting_alloc),
                 resize: Some(no_resize),
                 remap: Some(no_remap),
                 free: Some(counting_free),
+                reserved: RESERVED_VTABLE_SLOTS,
             };
             allocator(self, &VTABLE)
         }
 
         /// The number of bytes currently allocated and not yet freed.
         pub(crate) fn live(&self) -> usize {
-            self.live.get()
+            self.live.load(Ordering::Relaxed)
         }
     }
 
@@ -533,10 +571,13 @@ pub(crate) mod testing {
     ) -> *mut c_void {
         // SAFETY: `ctx` is the `Counting` the allocator borrows.
         let this = unsafe { &*ctx.cast::<Counting>() };
-        this.live.set(this.live.get() + len);
         // SAFETY: `len` is never zero: Zig's allocator interface handles
         // zero-length requests without calling into the vtable.
-        unsafe { std::alloc::alloc(layout(len, alignment)).cast() }
+        let mem = unsafe { std::alloc::alloc(layout(len, alignment)) };
+        if !mem.is_null() {
+            this.live.fetch_add(len, Ordering::Relaxed);
+        }
+        mem.cast()
     }
 
     unsafe extern "C" fn counting_free(
@@ -548,7 +589,11 @@ pub(crate) mod testing {
     ) {
         // SAFETY: `ctx` is the `Counting` the allocator borrows.
         let this = unsafe { &*ctx.cast::<Counting>() };
-        this.live.set(this.live.get() - len);
+        let live = this.live.fetch_sub(len, Ordering::Relaxed);
+        assert!(
+            live >= len,
+            "freed more than was allocated - this is a bug!"
+        );
         // SAFETY: Forwarded from libghostty, which allocated `mem` through
         // `counting_alloc` from the global heap.
         unsafe { heap_free(ctx, mem, len, alignment, ret_addr) };
@@ -570,25 +615,27 @@ pub(crate) mod testing {
     ///
     /// `AddressSanitizer` doesn't instrument Zig code, so it can't see
     /// libghostty reading memory it already freed. Instead, every allocation
-    /// gets its own mapping, and freeing it revokes all access to the mapping
-    /// without ever unmapping it, so the address can't be reused either.
-    #[cfg(unix)]
+    /// gets its own mapping, and freeing it replaces the mapping with an
+    /// inaccessible one, so the pages are released but the address can't be
+    /// reused either.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) struct Guard;
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     impl Guard {
         pub(crate) fn allocator() -> Allocator<'static> {
-            static VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
+            const VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
                 alloc: Some(guard_pages::alloc),
                 resize: Some(no_resize),
                 remap: Some(no_remap),
                 free: Some(guard_pages::free),
+                reserved: RESERVED_VTABLE_SLOTS,
             };
             allocator(&(), &VTABLE)
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     mod guard_pages {
         use std::ffi::{c_int, c_void};
 
@@ -601,15 +648,15 @@ pub(crate) mod testing {
                 fd: c_int,
                 offset: i64,
             ) -> *mut c_void;
-            fn mprotect(addr: *mut c_void, len: usize, prot: c_int) -> c_int;
         }
 
         const PROT_NONE: c_int = 0;
         const PROT_READ_WRITE: c_int = 0x1 | 0x2;
         const MAP_PRIVATE: c_int = 0x2;
+        const MAP_FIXED: c_int = 0x10;
         #[cfg(target_os = "linux")]
         const MAP_ANON: c_int = 0x20;
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         const MAP_ANON: c_int = 0x1000;
         const MAP_FAILED: *mut c_void = usize::MAX as *mut c_void;
         // Every page size we run on is a multiple of this, so mappings are
@@ -651,15 +698,60 @@ pub(crate) mod testing {
             _ret_addr: usize,
         ) {
             // SAFETY: `mem` is the start of a mapping of at least `len` bytes
-            // made by `alloc`.
-            let result = unsafe { mprotect(mem, len.max(1), PROT_NONE) };
-            assert_eq!(result, 0, "mprotect failed");
+            // made by `alloc`, and nothing may use it after it is freed.
+            let result = unsafe {
+                mmap(
+                    mem,
+                    len.max(1),
+                    PROT_NONE,
+                    MAP_PRIVATE | MAP_ANON | MAP_FIXED,
+                    -1,
+                    0,
+                )
+            };
+            assert_eq!(result, mem, "remapping freed memory failed");
         }
     }
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::used_underscore_items,
+    reason = "the underscore-named vtable functions are what is under test"
+)]
 mod tests {
+    /// A stateful allocator must stay reachable through the libghostty
+    /// allocator. Adapting it by value used to leave libghostty with a
+    /// pointer into a dead stack frame.
+    #[cfg(all(feature = "allocator_api", not(miri)))]
+    #[test]
+    fn allocator_api_allocators_keep_their_state() {
+        use std::{
+            alloc::Layout,
+            ptr::NonNull,
+            sync::atomic::{AtomicUsize, Ordering},
+        };
+
+        use allocator_api2::alloc::{AllocError, Global};
+
+        struct Counting(AtomicUsize);
+        unsafe impl allocator_api2::alloc::Allocator for Counting {
+            fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Global.allocate(layout)
+            }
+            unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+                unsafe { Global.deallocate(ptr, layout) };
+            }
+        }
+
+        let counting = Counting(AtomicUsize::new(0));
+        let alloc = super::Allocator::from(&counting);
+        let terminal = crate::Terminal::new_with_alloc(&alloc, 80, 24).unwrap();
+        drop(terminal);
+        assert!(counting.0.load(Ordering::Relaxed) > 0);
+    }
+
     use std::ptr::NonNull;
 
     use super::{_global_alloc, _global_free, _global_remap};
@@ -685,7 +777,7 @@ mod tests {
                 len,
                 alignment_log2,
                 0,
-            )
+            );
         };
     }
 
@@ -700,7 +792,7 @@ mod tests {
 
         let initial = unsafe { std::slice::from_raw_parts_mut(mem.as_ptr(), initial_len) };
         for (index, byte) in initial.iter_mut().enumerate() {
-            *byte = index as u8;
+            *byte = u8::try_from(index).unwrap();
         }
 
         let raw = unsafe {
@@ -717,7 +809,7 @@ mod tests {
 
         let grown = unsafe { std::slice::from_raw_parts(mem.as_ptr(), new_len) };
         for (index, byte) in grown[..initial_len].iter().copied().enumerate() {
-            assert_eq!(byte, index as u8);
+            assert_eq!(byte, u8::try_from(index).unwrap());
         }
 
         unsafe {
@@ -727,7 +819,7 @@ mod tests {
                 new_len,
                 alignment_log2,
                 0,
-            )
+            );
         };
     }
 

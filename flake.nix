@@ -19,7 +19,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     ghostty = {
-      url = "github:ghostty-org/ghostty/f9e82709360d97b2246718f774c544de0f16787b";
+      url = "github:aislopware/ghostty/031685561440826283f81d5a6a4c4965e63e87bc";
     };
   };
 
@@ -47,7 +47,8 @@
           targets = rustTargets;
         };
         rustTargets =
-          pkgs.lib.optionals pkgs.stdenv.isLinux [
+          ["wasm32-unknown-unknown"]
+          ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
             "x86_64-unknown-linux-gnu"
             "x86_64-unknown-linux-musl"
           ]
@@ -79,7 +80,14 @@
         craneCheckLib = (crane.mkLib pkgs).overrideToolchain checkToolchain;
         unfilteredRoot = ./.;
 
-        zigPkg = zig.packages.${system}."0.16.0";
+        # Ghostty patches Zig 0.17 so cross-compiling C sources for iOS does
+        # not instantiate process spawning code iOS lacks. Take the patch from
+        # the pinned ghostty input so it tracks the version we build against.
+        zigPkg = zig.packages.${system}."0.17.0".overrideAttrs (previousAttrs: {
+          patches =
+            (previousAttrs.patches or [])
+            ++ ["${ghostty}/nix/patches/zig-0.17-ios-process-replace.patch"];
+        });
         ghosttyLib = ghostty.packages.${system}.libghostty-vt;
 
         miriCommand = pkgs.writeShellApplication {
@@ -89,8 +97,10 @@
             cargo miri test --locked -p libghostty-vt-sys --lib
             cargo miri test --locked -p libghostty-vt --lib alloc::tests::
             # Issue #74 soundness regression tests (both clipboard findings
-            # live in this module). Miri aborts the test process at the first
-            # UB it finds, so a broken tree reports only the first failing test.
+            # live in this module), plus tests that need the mock C API to
+            # produce shapes real libghostty can't yet. Miri aborts the test
+            # process at the first UB it finds, so a broken tree reports only
+            # the first failing test.
             cargo miri test --locked -p libghostty-vt --lib miri_soundness
           '';
         };
@@ -116,7 +126,12 @@
             version = "0.2.1";
             inherit src;
             strictDeps = true;
-            cargoExtraArgs = "--locked --features libghostty-vt-sys/pkg-config";
+            # No workspace member enables the optional `png` feature, so turn it
+            # on here; otherwise the PNG decoder is never type-checked, linted,
+            # doc-checked or tested in CI. Setting it in the shared arguments
+            # also builds the dependency artifacts with it, so the checks
+            # below don't each rebuild png and its dependencies.
+            cargoExtraArgs = "--locked --features libghostty-vt-sys/pkg-config --features libghostty-vt/png";
 
             nativeBuildInputs = [
               pkgs.pkg-config
@@ -156,16 +171,12 @@
         checks = {
           default = application;
 
-          # No workspace member enables the optional `png` feature, so the
-          # checks below that compile the safe crate turn it on explicitly;
-          # otherwise the PNG decoder is never type-checked, linted,
-          # doc-checked or tested in CI.
           cargo-check = craneLib.mkCargoDerivation (
             commonArgs
             // {
               inherit cargoArtifacts;
               pnameSuffix = "-check";
-              buildPhaseCargoCommand = "cargoWithProfile check ${commonArgs.cargoExtraArgs} --workspace --all-targets --features libghostty-vt/png";
+              buildPhaseCargoCommand = "cargoWithProfile check ${commonArgs.cargoExtraArgs} --workspace --all-targets";
             }
           );
 
@@ -173,7 +184,8 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--workspace --all-targets --features libghostty-vt/png";
+              # Without denying warnings, clippy findings never fail CI.
+              cargoClippyExtraArgs = "--workspace --all-targets -- --deny warnings";
             }
           );
 
@@ -181,7 +193,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoDocExtraArgs = "--workspace --no-deps --features libghostty-vt/png";
+              cargoDocExtraArgs = "--workspace --no-deps";
               RUSTDOCFLAGS = "-D warnings";
             }
           );
@@ -213,16 +225,20 @@
                   echo "Bump both to the same commit." >&2
                   exit 1
                 fi
-                cargo run ${commonArgs.cargoExtraArgs} -p libghostty-vt-sys \
+                # Not commonArgs.cargoExtraArgs: it also enables libghostty-vt
+                # features, which cargo rejects with only the -sys crate selected.
+                cargo run --locked --features libghostty-vt-sys/pkg-config -p libghostty-vt-sys \
                   --features libghostty-vt-sys/bindgen-tool --bin gen-bindings
                 cargo fmt -p libghostty-vt-sys
-                if ! diff -u ${src}/crates/libghostty-vt-sys/src/bindings.rs \
-                  crates/libghostty-vt-sys/src/bindings.rs; then
-                  echo "error: crates/libghostty-vt-sys/src/bindings.rs is out of date." >&2
-                  echo "Regenerate it from the dev shell with:" >&2
-                  echo "  cargo run -p libghostty-vt-sys --features bindgen-tool --bin gen-bindings && cargo fmt -p libghostty-vt-sys" >&2
-                  exit 1
-                fi
+                for file in bindings.rs layouts.rs; do
+                  if ! diff -u ${src}/crates/libghostty-vt-sys/src/$file \
+                    crates/libghostty-vt-sys/src/$file; then
+                    echo "error: crates/libghostty-vt-sys/src/$file is out of date." >&2
+                    echo "Regenerate it from the dev shell with:" >&2
+                    echo "  cargo run -p libghostty-vt-sys --features bindgen-tool --bin gen-bindings && cargo fmt -p libghostty-vt-sys" >&2
+                    exit 1
+                  fi
+                done
               '';
               doInstallCargoArtifacts = false;
               installPhaseCommand = "touch $out";
@@ -239,7 +255,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs = "--workspace --all-targets --features libghostty-vt/png";
+              cargoTestExtraArgs = "--workspace --all-targets";
             }
           );
 
@@ -251,7 +267,7 @@
             // {
               inherit cargoArtifacts;
               pnameSuffix = "-doctest";
-              cargoTestExtraArgs = "-p libghostty-vt --doc --features libghostty-vt/png";
+              cargoTestExtraArgs = "-p libghostty-vt --doc";
             }
           );
 
@@ -277,6 +293,7 @@
           packages = [
             devToolchain
             zigPkg
+            pkgs.nodejs
             pkgs.clang
             pkgs.libclang
             pkgs.pkg-config
@@ -317,6 +334,12 @@
 
         devShells.miri = pkgs.mkShell {
           packages = [miriToolchain];
+        };
+
+        # Rust ships no wasm64 std; reuse the nightly toolchain with rust-src
+        # to build it with -Zbuild-std, without changing the native MSRV.
+        devShells.wasm64 = pkgs.mkShell {
+          packages = [miriToolchain zigPkg pkgs.nodejs];
         };
       }
     );

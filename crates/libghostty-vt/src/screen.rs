@@ -3,14 +3,19 @@
 //! These types represent the contents of a terminal screen.
 //! A [`Cell`] is a single grid cell and a [`Row`] is a single row.
 //! Both are opaque values whose fields are accessed via their methods.
-use std::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull, sync::OnceLock};
+use std::{
+    marker::PhantomData,
+    mem::MaybeUninit,
+    ptr::NonNull,
+    sync::{Arc, OnceLock},
+};
 
 use crate::{
     error::{Error, Result, from_optional_result_uninit, from_result, from_result_with_len},
     ffi,
     manifest::{self, Value},
     style::{self, PaletteIndex, RgbColor, Style},
-    terminal::{Point, PointCoordinate, PointSpace, Terminal},
+    terminal::{Detached, DetachedHandle, Point, PointCoordinate, PointSpace, Terminal},
 };
 
 /// Terminal screen identifier.
@@ -155,7 +160,14 @@ impl GridRef<'_> {
 /// and may move the tracked reference between screens.
 ///
 /// If the tracked grid reference outlives the terminal it is created from,
-/// it remains valid, but all APIs return either `false` or `Ok(None)`.
+/// it remains valid, but it can no longer be read: every method takes the
+/// terminal, and rejects any other with [`Error::InvalidValue`].
+///
+/// Every method that reads or moves the reference takes its terminal, since
+/// the terminal updates the reference whenever it changes: the call then runs
+/// wherever the terminal is, even after the terminal moved to another thread.
+/// Dropping the reference while its terminal lives queues it for the terminal
+/// to free at its next write or when it is dropped.
 ///
 /// Each tracked reference adds bookkeeping to terminal mutations. Use them
 /// sparingly for long-lived anchors such as selections, search state, marks,
@@ -163,23 +175,41 @@ impl GridRef<'_> {
 #[derive(Debug)]
 pub struct TrackedGridRef {
     inner: NonNull<ffi::TrackedGridRefImpl>,
-    terminal: NonNull<ffi::TerminalImpl>,
+    /// The creating terminal's release queue, which doubles as its identity:
+    /// held here, its allocation can't be reused by another terminal.
+    detached: Arc<Detached>,
 }
 
 impl TrackedGridRef {
     pub(crate) fn new(
         inner: NonNull<ffi::TrackedGridRefImpl>,
-        terminal: NonNull<ffi::TerminalImpl>,
+        terminal: &Terminal<'_, '_>,
     ) -> Self {
-        Self { inner, terminal }
+        Self {
+            inner,
+            detached: Arc::clone(terminal.detached()),
+        }
+    }
+
+    /// Reject a terminal other than the one that created this reference.
+    ///
+    /// The C functions that read a tracked reference don't take a terminal;
+    /// requiring it here keeps every read on the terminal's thread and
+    /// ordered with the terminal's own updates to the reference.
+    fn check_terminal(&self, terminal: &Terminal<'_, '_>) -> Result<()> {
+        if Arc::ptr_eq(&self.detached, terminal.detached()) {
+            Ok(())
+        } else {
+            Err(Error::InvalidValue)
+        }
     }
 
     /// Whether a tracked grid reference currently has a meaningful value.
-    ///
-    /// If the terminal that created the tracked reference has been dropped,
-    /// this returns false.
-    pub fn has_value(&self) -> bool {
-        unsafe { ffi::ghostty_tracked_grid_ref_has_value(self.inner.as_ptr()) }
+    pub fn has_value(&self, terminal: &Terminal<'_, '_>) -> Result<bool> {
+        self.check_terminal(terminal)?;
+        // SAFETY: The reference is live, and the terminal borrow orders the
+        // read with the terminal's updates to it.
+        Ok(unsafe { ffi::ghostty_tracked_grid_ref_has_value(self.inner.as_ptr()) })
     }
 
     /// Snapshot a tracked grid reference into a regular [`GridRef`].
@@ -195,10 +225,8 @@ impl TrackedGridRef {
         // The C ghostty_tracked_grid_ref_snapshot does not take a terminal, so
         // we validate the pairing here to keep the returned GridRef's lifetime
         // soundly tied to a terminal that actually owns the underlying pin.
-        if self.terminal != terminal.inner.ptr {
-            return Err(Error::InvalidValue);
-        }
-        let mut grid_ref = MaybeUninit::new(ffi::sized!(ffi::GridRef));
+        self.check_terminal(terminal)?;
+        let mut grid_ref = MaybeUninit::new(ffi::GridRef::default());
         let result = unsafe {
             ffi::ghostty_tracked_grid_ref_snapshot(self.inner.as_ptr(), grid_ref.as_mut_ptr())
         };
@@ -226,10 +254,14 @@ impl TrackedGridRef {
     /// set, this may be different from the terminal's currently active screen.
     ///
     /// If the tracked reference no longer has a meaningful value, this returns
-    /// `Ok(None)`. `Ok(None` is also returned when the reference cannot be represented
-    /// in the requested coordinate space, including after the terminal that
-    /// created the tracked reference has been dropped.
-    pub fn point(&self, space: PointSpace) -> Result<Option<PointCoordinate>> {
+    /// `Ok(None)`. `Ok(None)` is also returned when the reference cannot be
+    /// represented in the requested coordinate space.
+    pub fn point(
+        &self,
+        terminal: &Terminal<'_, '_>,
+        space: PointSpace,
+    ) -> Result<Option<PointCoordinate>> {
+        self.check_terminal(terminal)?;
         let mut point = MaybeUninit::<ffi::PointCoordinate>::zeroed();
         let result = unsafe {
             ffi::ghostty_tracked_grid_ref_point(
@@ -269,9 +301,25 @@ impl TrackedGridRef {
     }
 }
 
+// SAFETY: Every call that reads or moves the reference takes its terminal
+// and checks its identity before touching the reference, so the call runs
+// wherever the terminal is and is ordered with the terminal's own updates to
+// the reference (`Terminal` is `Send` but not `Sync`, so a `&Terminal` is on
+// one thread at a time). The drop hands the reference to the terminal to
+// free, or frees it directly once the terminal is gone, which
+// grid_ref_tracked.h allows.
+unsafe impl Send for TrackedGridRef {}
+// SAFETY: As above: shared access only reads through the terminal, which
+// serializes it.
+unsafe impl Sync for TrackedGridRef {}
+
 impl Drop for TrackedGridRef {
     fn drop(&mut self) {
-        unsafe { ffi::ghostty_tracked_grid_ref_free(self.inner.as_ptr()) }
+        // Freeing unregisters the pin from the terminal, which may be busy on
+        // another thread: the terminal frees it, or it frees itself once the
+        // terminal is gone.
+        self.detached
+            .release(DetachedHandle::TrackedGridRef(self.inner));
     }
 }
 
@@ -502,6 +550,25 @@ impl Bits {
         })
     }
 
+    /// Whether the field `name` of a packed descriptor holds the C enum
+    /// `type_name`, and the manifest gives that enum the `values` this
+    /// binding was generated with: the decoder turns the bits into enum
+    /// values as they are.
+    fn holds_enum(
+        manifest: &Value,
+        packed: &Value,
+        name: &str,
+        type_name: &str,
+        values: &[(&str, std::ffi::c_int)],
+    ) -> bool {
+        let typed = packed.at(&["bits", name, "type"]).and_then(Value::as_str) == Some(type_name);
+        let known = manifest.at(&["types", type_name, "values"]);
+        typed
+            && values.iter().all(|&(key, value)| {
+                known.and_then(|v| v.get(key)).and_then(Value::as_u64) == u64::try_from(value).ok()
+            })
+    }
+
     #[inline]
     const fn of(self, raw: u64) -> u64 {
         // `lsb` is below 64 (checked when the layout was read), so the
@@ -548,6 +615,46 @@ impl CellLayout {
             32,
         )?;
         if codepoint != grapheme {
+            return None;
+        }
+        let enums = [
+            (
+                "content_tag",
+                "GhosttyCellContentTag",
+                &[
+                    ("CODEPOINT", ffi::CellContentTag::CODEPOINT),
+                    (
+                        "CODEPOINT_GRAPHEME",
+                        ffi::CellContentTag::CODEPOINT_GRAPHEME,
+                    ),
+                    ("BG_COLOR_PALETTE", ffi::CellContentTag::BG_COLOR_PALETTE),
+                    ("BG_COLOR_RGB", ffi::CellContentTag::BG_COLOR_RGB),
+                ][..],
+            ),
+            (
+                "wide",
+                "GhosttyCellWide",
+                &[
+                    ("NARROW", ffi::CellWide::NARROW),
+                    ("WIDE", ffi::CellWide::WIDE),
+                    ("SPACER_TAIL", ffi::CellWide::SPACER_TAIL),
+                    ("SPACER_HEAD", ffi::CellWide::SPACER_HEAD),
+                ][..],
+            ),
+            (
+                "semantic_content",
+                "GhosttyCellSemanticContent",
+                &[
+                    ("OUTPUT", ffi::CellSemanticContent::OUTPUT),
+                    ("INPUT", ffi::CellSemanticContent::INPUT),
+                    ("PROMPT", ffi::CellSemanticContent::PROMPT),
+                ][..],
+            ),
+        ];
+        let enums_known = enums.iter().all(|&(name, type_name, values)| {
+            Bits::holds_enum(manifest, cell, name, type_name, values)
+        });
+        if !enums_known {
             return None;
         }
         Some(Self {
@@ -738,8 +845,9 @@ mod tests {
         assert!(styled && linked && protected);
     }
 
-    /// A manifest without a field, with one too wide for its type, or with
-    /// the two codepoint arms apart is refused, so the getters are used.
+    /// A manifest without a field, with one too wide for its type, with the
+    /// two codepoint arms apart, or with an enum field of another type or
+    /// numbering is refused, so the getters are used.
     #[test]
     fn a_manifest_that_does_not_describe_the_cell_is_refused() {
         let cell = |content_tag: &str, style_width: u32, grapheme_lsb: u32| {
@@ -750,15 +858,18 @@ mod tests {
                     "CODEPOINT":{{"bits":{{"codepoint":{{"lsb":0,"width":21}}}}}},
                     "CODEPOINT_GRAPHEME":{{"bits":{{"codepoint":{{"lsb":{grapheme_lsb},"width":21}}}}}}}}}},
                 "style_id":{{"lsb":26,"width":{style_width}}},
-                "wide":{{"lsb":42,"width":2}},
+                "wide":{{"lsb":42,"width":2,"type":"GhosttyCellWide"}},
                 "protected":{{"lsb":44,"width":1}},
                 "hyperlink":{{"lsb":45,"width":1}},
-                "semantic_content":{{"lsb":46,"width":2}}}}}}}}}}"#
+                "semantic_content":{{"lsb":46,"width":2,"type":"GhosttyCellSemanticContent"}}}}}},
+                "GhosttyCellContentTag":{{"values":{{"CODEPOINT":0,"CODEPOINT_GRAPHEME":1,"BG_COLOR_PALETTE":2,"BG_COLOR_RGB":3}}}},
+                "GhosttyCellWide":{{"values":{{"NARROW":0,"WIDE":1,"SPACER_TAIL":2,"SPACER_HEAD":3}}}},
+                "GhosttyCellSemanticContent":{{"values":{{"OUTPUT":0,"INPUT":1,"PROMPT":2}}}}}}}}"#
             )
         };
         let read =
             |text: String| CellLayout::from_manifest(&manifest::parse(&text).expect("valid JSON"));
-        let tag = r#""content_tag":{"lsb":0,"width":2},"#;
+        let tag = r#""content_tag":{"lsb":0,"width":2,"type":"GhosttyCellContentTag"},"#;
         let good = read(cell(tag, 16, 0)).expect("the layout libghostty writes");
         assert_eq!(Some(good), CellLayout::linked().copied());
         assert_eq!(read(cell("", 16, 0)), None, "no content tag");
@@ -770,5 +881,10 @@ mod tests {
         assert_eq!(read(cell(tag, 16, 1)), None, "codepoint arms apart");
         let outside = cell(tag, 16, 0).replace(r#""lsb":46"#, r#""lsb":63"#);
         assert_eq!(read(outside), None, "a field past bit 63");
+        let untyped = cell(tag, 16, 0).replace(r#","type":"GhosttyCellWide""#, "");
+        assert_eq!(read(untyped), None, "a width without its enum");
+        let renumbered =
+            cell(tag, 16, 0).replace(r#""INPUT":1,"PROMPT":2"#, r#""INPUT":2,"PROMPT":1"#);
+        assert_eq!(read(renumbered), None, "semantic content numbered apart");
     }
 }
