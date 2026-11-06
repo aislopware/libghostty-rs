@@ -1,5 +1,12 @@
 # libghostty-rs
 
+> [!NOTE]
+> **aislopware/libghostty-rs** is the binding [onicode](https://github.com/aislopware/onicode)'s terminals run on. It
+> targets the frozen libghostty-vt ABI of [aislopware/ghostty](https://github.com/aislopware/ghostty), and links a
+> prebuilt library by sha256, so Zig is only needed with `GHOSTTY_SOURCE_DIR`. It adds a `Send` terminal, one-call
+> dirty-row reads, packed-cell decoding from the build's type manifest, VT-format replay, and memory-usage and
+> render-state queries. Windows is dropped. Onicode pins a rev on `main`.
+
 Rust bindings and safe API for [libghostty-vt](https://ghostty.org), the virtual terminal emulator library extracted from [Ghostty](https://ghostty.org).
 
 ## Workspace Layout
