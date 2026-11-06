@@ -24,7 +24,7 @@ use std::process::Command;
 /// built from, so one edit here moves the source, the bindings and the
 /// binaries together.
 const GHOSTTY_REPO: &str = "https://github.com/aislopware/ghostty.git";
-const GHOSTTY_COMMIT: &str = "0339f2bbcae34b4ecf80347f0d42fe5e5610855b";
+const GHOSTTY_COMMIT: &str = "dc448a5b79d2c11c3dbb42973d0e43303c8407a7";
 
 /// The Zig the pin requires (`minimum_zig_version` in its build.zig.zon). The
 /// prebuilt workflow installs exactly this one; a source build only warns on

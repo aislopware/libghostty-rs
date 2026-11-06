@@ -70,17 +70,17 @@ jobs:
         include:
           - name: macOS aarch64
             id: macos-aarch64
-            runner: macos-15
+            runner: xcode-27
             triples: aarch64-apple-darwin
             # Native, as build.rs builds on an Apple silicon Mac, so Zig finds
-            # the runner's SDK; Ghostty sets the deployment target itself.
+            # the runner's SDK; the fork sets the deployment target (27.2).
             zig_args: -Demit-xcframework=false
           # Both iOS slices come out of one xcframework emit, which is how
           # build.rs builds iOS too: the flat -Dtarget=ios build cannot compile
           # simdutf's NEON intrinsics for a generic baseline.
           - name: iOS aarch64 and simulator
             id: ios
-            runner: macos-15
+            runner: xcode-27
             triples: aarch64-apple-ios aarch64-apple-ios-sim
             zig_args: -Demit-xcframework=true
           # An explicit -Dtarget builds against Zig's bundled glibc headers at
@@ -120,6 +120,17 @@ jobs:
             echo "error: ghostty $GHOSTTY_COMMIT wants Zig $zon, build.rs says $ZIG_VERSION" >&2
             exit 1
           fi
+
+      # The libraries target macOS and iOS 27.2, so they build against the
+      # 27.2 SDKs, which the xcode-27 image has in Xcode 27.2 (not its default).
+      - name: Select Xcode 27.2
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          app=$(ls -d /Applications/Xcode_27.2*.app | sort | tail -n 1)
+          sudo xcode-select --switch "$app"
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --sdk iphoneos --show-sdk-version
 
       # Its own cache holds the Zig global cache, where the packages
       # deps/libghostty-vt.txt lists are fetched to; keying it by that list
