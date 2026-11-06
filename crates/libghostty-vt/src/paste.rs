@@ -380,7 +380,8 @@ mod tests {
         Error,
         terminal::{ClipboardReadError, Mode},
     };
-    use std::cell::{Cell, RefCell};
+    // `Sync` stand-ins: effect callbacks must be `Send`.
+    use crate::sync_cell::{Cell, RefCell};
 
     const TEXT: [ClipboardMime<'static>; 1] = [ClipboardMime::new("text/plain")];
 

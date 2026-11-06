@@ -1,9 +1,9 @@
 //! Integration checks, separate from the browser example.
 
 use std::{
-    cell::RefCell,
     ffi::CStr,
     mem::{align_of, offset_of, size_of},
+    sync::Mutex,
 };
 
 use libghostty_vt::{
@@ -43,7 +43,7 @@ pub extern "C" fn run() {
     let guard = vec![0x5au8; 256 * 1024];
     // Exercise both Zig's default heap and callbacks into Rust's allocator.
     for custom_allocator in [false, true] {
-        let response = RefCell::new(Vec::new());
+        let response = Mutex::new(Vec::new());
         let mut terminal = if custom_allocator {
             Terminal::new_with_alloc(&Allocator::GLOBAL, 13, 7)
         } else {
@@ -51,10 +51,10 @@ pub extern "C" fn run() {
         }
         .unwrap();
         terminal
-            .on_pty_write(|_, bytes: &[u8]| response.borrow_mut().extend_from_slice(bytes))
+            .on_pty_write(|_, bytes: &[u8]| response.lock().unwrap().extend_from_slice(bytes))
             .unwrap();
         terminal.vt_write(b"ab\x1b[31mC\x1b[0m\r\nxy\x1b[6n");
-        assert_eq!(*response.borrow(), b"\x1b[2;3R");
+        assert_eq!(*response.lock().unwrap(), b"\x1b[2;3R");
         assert_eq!(terminal.cursor_x().unwrap(), 2);
         assert_eq!(terminal.cursor_y().unwrap(), 1);
         let mut state = RenderState::new().unwrap();

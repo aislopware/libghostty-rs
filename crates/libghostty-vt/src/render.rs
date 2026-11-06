@@ -732,6 +732,21 @@ pub struct CellIteration<'alloc, 's> {
 #[derive(Debug)]
 pub struct ImageIterator<'alloc>(Object<'alloc, ffi::RenderStateImageIteratorImpl>);
 
+// SAFETY: A render state shares nothing with its terminal outside an update,
+// which borrows the terminal (render.h: the update is the only step that
+// needs terminal access, so a renderer can own the state on its own thread).
+// The iterators are handles of their own that only touch the render state
+// through an iteration, which borrows a snapshot of it. libghostty creates no
+// threads and allows a handle on any thread while calls on it don't overlap
+// (vt.h, "Threads"); none of these is `Sync`. Custom allocators are `Sync`.
+unsafe impl Send for RenderState<'_> {}
+// SAFETY: See `RenderState`.
+unsafe impl Send for RowIterator<'_> {}
+// SAFETY: See `RenderState`.
+unsafe impl Send for CellIterator<'_> {}
+// SAFETY: See `RenderState`.
+unsafe impl Send for ImageIterator<'_> {}
+
 /// An active iteration over the image placements of a render state.
 ///
 /// Image iterations are created by [updating](ImageIterator::update) image

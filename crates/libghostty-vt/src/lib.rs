@@ -45,31 +45,48 @@
 //! You can adapt the existing, unstable `Allocator` API into a
 //! [libghostty-friendly allocator](alloc::Allocator) via its `From`
 //! implementation. Note that the `'alloc` lifetime must at least
-//! live as long as the `Allocator` instance itself.
+//! live as long as the `Allocator` instance itself, and that the allocator
+//! must be [`Sync`], since a terminal using it can move to another thread.
 //!
 //! # Thread safety
 //!
-//! The entire `libghostty-vt` library is **not** thread-safe unless otherwise
-//! noted. This is because the underlying C API is not designed with thread
-//! safety in mind, and we as binding authors must rather conservatively
-//! avoid making any assumptions beyond what is presently guaranteed by the
-//! C API.
+//! libghostty-vt documents its threading rules (`vt.h`, "Threads"): the
+//! library creates no threads, every callback runs on the thread whose call
+//! triggered it, calls on one handle and on any handle borrowed from it must
+//! not run at the same time, and handles that share nothing can be used on
+//! different threads. The rules tie no handle to the thread that created
+//! it, so a handle may move between threads as long as its calls never
+//! overlap.
 //!
-//! In particular, all `libghostty-vt` types are `!Send`, meaning they cannot
-//! be *transferred* across threads, since the C API is allowed to use
-//! thread-local state; they are also `!Sync`, meaning they cannot be *shared*
-//! across threads, since data races may occur as the C API is not guarded with
-//! mutexes or other synchronization mechanisms.
-//! We currently do not expect to lift these limitations unless the C API starts
-//! to make stronger guarantees regarding thread safety.
+//! The bindings map these rules onto Rust's auto traits:
 //!
-//! Note that this does *not* mean that `libghostty-vt` can only be used on
-//! the main thread. On the contrary, in a complex program we encourage you to
-//! create the terminal on a separate thread (or task in async programming),
-//! and use [channels](std::sync::mpsc::channel) to communicate between the
-//! terminal emulation thread/task and the main program. Under sufficient load, it is
-//! generally more efficient to offload terminal emulation to its own operating
-//! system-level thread, in order to reduce competition with other business logic.
+//! - [`Terminal`] is [`Send`] but not [`Sync`]: it can move to another
+//!   thread, and `&mut self` already keeps its calls from overlapping.
+//!   Everything that borrows the terminal, such as a
+//!   [`GridRef`](screen::GridRef), stays with it through the borrow.
+//! - Effect callbacks must be [`Send`], since they move with the terminal
+//!   and run on whichever thread calls it. Share state with them through
+//!   atomics or a [`Mutex`](std::sync::Mutex) rather than
+//!   [`Cell`](std::cell::Cell) or [`RefCell`](std::cell::RefCell).
+//! - Custom [allocators](alloc::Allocator) must be [`Sync`], since a terminal
+//!   using one may run on another thread than other handles sharing it.
+//! - A [`RenderState`] and its iterators are [`Send`]: they only touch the
+//!   terminal during calls that borrow it.
+//! - A [`Search`](search::Search) and a
+//!   [`TrackedGridRef`](screen::TrackedGridRef) outlive any borrow of their
+//!   terminal, yet freeing them unregisters state inside it. Every call that
+//!   touches the terminal takes it as an argument, and dropping one hands it
+//!   to its terminal, which frees it at its next write or when it is dropped
+//!   itself, so either can be dropped on any thread.
+//! - The process-wide settings in [`sys`] and the PNG decoder hook have their
+//!   own rules, documented on each function.
+//!
+//! A terminal can therefore run on its own thread (or task in async
+//! programming), talking to the rest of the program over
+//! [channels](std::sync::mpsc::channel), or be created on one thread and
+//! handed to another. Under sufficient load, it is generally more efficient
+//! to offload terminal emulation to its own operating system-level thread,
+//! in order to reduce competition with other business logic.
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/ghostty-org/ghostty/2d0fb81751def478e2f8a5f7e2ee91fa9cbf9bff/images/icons/icon_128@2x.png"
 )]
@@ -118,6 +135,8 @@ pub mod selection;
 pub mod sgr;
 pub mod snapshot;
 pub mod style;
+#[cfg(test)]
+pub(crate) mod sync_cell;
 pub mod sys;
 pub mod unicode;
 

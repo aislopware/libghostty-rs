@@ -5,8 +5,8 @@
 
 use std::{
     alloc::{GlobalAlloc, Layout, System},
-    cell::Cell,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicU32, AtomicUsize, Ordering},
+    thread,
 };
 
 use libghostty_vt::Terminal;
@@ -30,28 +30,47 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static GLOBAL: Counting = Counting;
 
-/// A terminal moved after its callbacks are registered still reaches them,
-/// and a callback allocates nothing on the Rust side.
+/// A terminal moved after its callbacks are registered, to another place
+/// and to another thread, still reaches them, and a callback allocates
+/// nothing on the Rust side.
 #[test]
 fn callbacks_survive_a_move_and_allocate_nothing() {
-    let bells = Cell::new(0_u32);
-    let holds = Cell::new(0_u32);
+    let bells = AtomicU32::new(0);
+    let holds = AtomicU32::new(0);
     let mut terminal = Terminal::new(8, 2).unwrap();
-    terminal.on_bell(|_| bells.set(bells.get() + 1)).unwrap();
     terminal
-        .on_render_hold(|_, _| holds.set(holds.get() + 1))
+        .on_bell(|_| {
+            bells.fetch_add(1, Ordering::Relaxed);
+        })
+        .unwrap();
+    terminal
+        .on_render_hold(|_, _| {
+            holds.fetch_add(1, Ordering::Relaxed);
+        })
         .unwrap();
 
     // Moved into a box and out again: the callbacks' table stays put.
     let mut terminal = *Box::new(terminal);
     terminal.vt_write(b"\x07");
-    assert_eq!(bells.get(), 1);
+    assert_eq!(bells.load(Ordering::Relaxed), 1);
 
-    let before = ALLOCATIONS.load(Ordering::Relaxed);
-    for _ in 0..100 {
-        terminal.vt_write(b"\x07\x1b[?2026h\x1b[?2026l");
-    }
-    let allocated = ALLOCATIONS.load(Ordering::Relaxed) - before;
-    assert_eq!((bells.get(), holds.get()), (101, 200));
+    // Moved to another thread, which runs the callbacks. Spawning allocates,
+    // so the count starts on that thread, while this one only waits.
+    let allocated = thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let before = ALLOCATIONS.load(Ordering::Relaxed);
+                for _ in 0..100 {
+                    terminal.vt_write(b"\x07\x1b[?2026h\x1b[?2026l");
+                }
+                ALLOCATIONS.load(Ordering::Relaxed) - before
+            })
+            .join()
+            .unwrap()
+    });
+    assert_eq!(
+        (bells.load(Ordering::Relaxed), holds.load(Ordering::Relaxed)),
+        (101, 200)
+    );
     assert_eq!(allocated, 0, "Rust allocations in 300 callbacks");
 }

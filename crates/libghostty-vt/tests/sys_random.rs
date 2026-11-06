@@ -4,9 +4,9 @@
 // These call into libghostty, which Miri cannot execute.
 #![cfg(not(miri))]
 
-use std::{
-    cell::RefCell,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use libghostty_vt::{
@@ -37,10 +37,10 @@ fn counting(buf: &mut [u8]) -> bool {
 /// Paste into a terminal whose program asked for Kitty paste events, which
 /// need entropy for their one-time password. Returns the result and output.
 fn paste_event() -> (Result<bool, Error>, Vec<u8>) {
-    let output = RefCell::new(Vec::new());
+    let output = Mutex::new(Vec::new());
     let mut terminal = Terminal::new(80, 24).unwrap();
     terminal
-        .on_pty_write(|_term, bytes| output.borrow_mut().extend_from_slice(bytes))
+        .on_pty_write(|_term, bytes| output.lock().unwrap().extend_from_slice(bytes))
         .unwrap()
         // Without a clipboard-read handler the paste never reaches the
         // paste-event path, so the entropy source would not be called.
@@ -52,7 +52,7 @@ fn paste_event() -> (Result<bool, Error>, Vec<u8>) {
     let mimes = [ClipboardMime::new("text/plain")];
     let result = terminal.paste(Options::new(), &mimes, |_mime, _out| Ok(()));
     drop(terminal);
-    (result, output.into_inner())
+    (result, output.into_inner().unwrap())
 }
 
 #[test]

@@ -313,8 +313,13 @@ unsafe extern "C" fn _global_remap(
 /// libghostty calls back into the allocator through a pointer to it, so the
 /// allocator is borrowed for `'ctx` rather than moved in: a moved-in value
 /// would live in this function's stack frame and be gone by the first call.
+///
+/// The allocator must be `Sync`: libghostty calls it from whichever thread
+/// uses a handle created with it, and a [`Terminal`](crate::Terminal) can
+/// move to another thread while other handles sharing the allocator stay.
+/// Wrap a single-threaded allocator in a lock to use it.
 #[cfg(feature = "allocator_api")]
-impl<'ctx, A: alloc::Allocator> From<&'ctx A> for Allocator<'ctx> {
+impl<'ctx, A: alloc::Allocator + Sync> From<&'ctx A> for Allocator<'ctx> {
     fn from(value: &'ctx A) -> Self {
         Self {
             inner: ffi::Allocator {
@@ -433,7 +438,10 @@ unsafe fn get_allocator<'a, A: alloc::Allocator>(ptr: *mut c_void) -> Option<&'a
 /// libghostty allocates.
 #[cfg(all(test, not(miri)))]
 pub(crate) mod testing {
-    use std::{cell::Cell, ffi::c_void};
+    use std::{
+        ffi::c_void,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use super::{Allocator, RESERVED_VTABLE_SLOTS};
     use crate::ffi;
@@ -441,7 +449,9 @@ pub(crate) mod testing {
     /// Turn a test allocator's state and vtable into an [`Allocator`].
     ///
     /// Every vtable entry must be set: libghostty calls them unconditionally.
-    fn allocator<'a, T>(ctx: &'a T, vtable: &'static ffi::AllocatorVtable) -> Allocator<'a> {
+    /// The state is `Sync`, like every allocator a terminal may use, since a
+    /// terminal can move to another thread.
+    fn allocator<'a, T: Sync>(ctx: &'a T, vtable: &'static ffi::AllocatorVtable) -> Allocator<'a> {
         let raw = ffi::Allocator {
             ctx: std::ptr::from_ref(ctx).cast_mut().cast(),
             vtable: &raw const *vtable,
@@ -483,14 +493,14 @@ pub(crate) mod testing {
     /// request, like the limit libghostty places on some callbacks.
     pub(crate) struct Capped {
         cap: usize,
-        largest_request: Cell<usize>,
+        largest_request: AtomicUsize,
     }
 
     impl Capped {
         pub(crate) fn new(cap: usize) -> Self {
             Self {
                 cap,
-                largest_request: Cell::new(0),
+                largest_request: AtomicUsize::new(0),
             }
         }
 
@@ -508,7 +518,7 @@ pub(crate) mod testing {
         /// The largest allocation requested so far, including refused ones.
         #[cfg(all(feature = "kitty-graphics", feature = "png"))]
         pub(crate) fn largest_request(&self) -> usize {
-            self.largest_request.get()
+            self.largest_request.load(Ordering::Relaxed)
         }
     }
 
@@ -520,8 +530,7 @@ pub(crate) mod testing {
     ) -> *mut c_void {
         // SAFETY: `ctx` is the `Capped` the allocator borrows.
         let this = unsafe { &*ctx.cast::<Capped>() };
-        this.largest_request
-            .set(this.largest_request.get().max(len));
+        this.largest_request.fetch_max(len, Ordering::Relaxed);
         if len > this.cap {
             return std::ptr::null_mut();
         }
@@ -533,7 +542,7 @@ pub(crate) mod testing {
     /// Tracks how many bytes libghostty holds through the allocator.
     #[derive(Default)]
     pub(crate) struct Counting {
-        live: Cell<usize>,
+        live: AtomicUsize,
     }
 
     impl Counting {
@@ -550,7 +559,7 @@ pub(crate) mod testing {
 
         /// The number of bytes currently allocated and not yet freed.
         pub(crate) fn live(&self) -> usize {
-            self.live.get()
+            self.live.load(Ordering::Relaxed)
         }
     }
 
@@ -566,7 +575,7 @@ pub(crate) mod testing {
         // zero-length requests without calling into the vtable.
         let mem = unsafe { std::alloc::alloc(layout(len, alignment)) };
         if !mem.is_null() {
-            this.live.set(this.live.get() + len);
+            this.live.fetch_add(len, Ordering::Relaxed);
         }
         mem.cast()
     }
@@ -580,9 +589,11 @@ pub(crate) mod testing {
     ) {
         // SAFETY: `ctx` is the `Counting` the allocator borrows.
         let this = unsafe { &*ctx.cast::<Counting>() };
-        let live = this.live.get().checked_sub(len);
-        this.live
-            .set(live.expect("freed more than was allocated - this is a bug!"));
+        let live = this.live.fetch_sub(len, Ordering::Relaxed);
+        assert!(
+            live >= len,
+            "freed more than was allocated - this is a bug!"
+        );
         // SAFETY: Forwarded from libghostty, which allocated `mem` through
         // `counting_alloc` from the global heap.
         unsafe { heap_free(ctx, mem, len, alignment, ret_addr) };
@@ -715,14 +726,18 @@ mod tests {
     #[cfg(all(feature = "allocator_api", not(miri)))]
     #[test]
     fn allocator_api_allocators_keep_their_state() {
-        use std::{alloc::Layout, cell::Cell, ptr::NonNull};
+        use std::{
+            alloc::Layout,
+            ptr::NonNull,
+            sync::atomic::{AtomicUsize, Ordering},
+        };
 
         use allocator_api2::alloc::{AllocError, Global};
 
-        struct Counting(Cell<usize>);
+        struct Counting(AtomicUsize);
         unsafe impl allocator_api2::alloc::Allocator for Counting {
             fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-                self.0.set(self.0.get() + 1);
+                self.0.fetch_add(1, Ordering::Relaxed);
                 Global.allocate(layout)
             }
             unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
@@ -730,11 +745,11 @@ mod tests {
             }
         }
 
-        let counting = Counting(Cell::new(0));
+        let counting = Counting(AtomicUsize::new(0));
         let alloc = super::Allocator::from(&counting);
         let terminal = crate::Terminal::new_with_alloc(&alloc, 80, 24).unwrap();
         drop(terminal);
-        assert!(counting.0.get() > 0);
+        assert!(counting.0.load(Ordering::Relaxed) > 0);
     }
 
     use std::ptr::NonNull;

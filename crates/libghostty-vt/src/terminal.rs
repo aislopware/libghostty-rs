@@ -1,6 +1,16 @@
 //! Types and functions around terminal state management.
 
-use std::{io::Write, marker::PhantomData, mem::MaybeUninit, num::NonZeroU16, ptr::NonNull};
+use std::{
+    io::Write,
+    marker::PhantomData,
+    mem::MaybeUninit,
+    num::NonZeroU16,
+    ptr::NonNull,
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use crate::{
     alloc::{Allocator, Bytes, Object},
@@ -88,52 +98,54 @@ pub use ffi::{SizeReportSize, TerminalScrollbar as Scrollbar};
 /// due to Rust's much stricter safety guarantees. In turn, we use the
 /// user data internally for callback dispatch purposes.
 ///
-/// You should instead use types that allow safe *interior mutability*
-/// (e.g. [`Cell`](std::cell::Cell) or [`RefCell`](std::cell::RefCell))
-/// and pass a shared reference into each effect handler that needs to mutate
-/// the shared state. Note that reference counting mechanisms like
-/// [`Rc`](std::rc::Rc) and [`Arc`](std::sync::Arc) are optional.
+/// You should instead use types that allow safe shared mutation and pass a
+/// shared reference into each effect handler that needs to mutate the
+/// shared state. A terminal can move to another thread (it is
+/// [`Send`]), so its callbacks must be [`Send`] too: share atomics (e.g.
+/// [`AtomicUsize`](std::sync::atomic::AtomicUsize)) or a
+/// [`Mutex`], not [`Cell`](std::cell::Cell),
+/// [`RefCell`](std::cell::RefCell) or [`Rc`](std::rc::Rc). An
+/// [`Arc`] is optional: a plain reference works while the
+/// shared state outlives the terminal.
 ///
 /// ## Example: Registering effects and processing VT data
 ///
 /// ```rust
-/// use std::cell::Cell;
+/// use std::sync::atomic::{AtomicUsize, Ordering};
 /// use libghostty_vt::Terminal;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Set up a simple bell counter.
 /// //
-/// // `usize` is a simple, `Copy`able type, which means `Cell`s are
-/// // perfectly suitable here. More complex, non-`Copy` types should
-/// // use `RefCell`s instead.
+/// // A counter fits an atomic. More complex state should use a `Mutex`.
 /// //
 /// // This has to be done before the terminal is created, since
 /// // its effect handlers will continue to refer to the bell counter
 /// // during the lifetime of the terminal.
-/// let bell_count = Cell::new(0usize);
+/// let bell_count = AtomicUsize::new(0);
 ///
 /// let mut terminal = Terminal::new(80, 24)?;
 /// terminal
 ///     .on_pty_write(|_term, data| {
 ///         println!("Replying {} bytes to the PTY", data.len());
 ///     })?
-///    .on_bell({
-///        // Explicitly borrow the bell count, or otherwise `move`
-///        // will attempt to capture the entire `Cell` and cause a
-///        // compiler error
-///        let bell_count = &bell_count;
-///        move |_term| {
-///            bell_count.update(|v| v + 1);
-///            println!("Bell! (count = {})", bell_count.get())
-///        }
+///     .on_bell({
+///         // Explicitly borrow the bell count, or otherwise `move`
+///         // will capture the counter itself, which the assertion
+///         // below still needs.
+///         let bell_count = &bell_count;
+///         move |_term| {
+///             let count = bell_count.fetch_add(1, Ordering::Relaxed) + 1;
+///             println!("Bell! (count = {count})");
+///         }
 ///     })?
-///    .on_title_changed(|term| {
-///        // Query the cursor position to confirm the terminal processed the
-///        // title change (the title itself is tracked by the embedder via the
-///        // OSC parser or its own state).
-///        let col = term.cursor_x().unwrap();
-///        println!("Title changed! (cursor at col {col})");
-///    })?;
+///     .on_title_changed(|term| {
+///         // Query the cursor position to confirm the terminal processed the
+///         // title change (the title itself is tracked by the embedder via the
+///         // OSC parser or its own state).
+///         let col = term.cursor_x().unwrap();
+///         println!("Title changed! (cursor at col {col})");
+///     })?;
 ///
 /// // Feed VT data that triggers effects:
 /// // 1. Bell (BEL = 0x07)
@@ -146,7 +158,7 @@ pub use ffi::{SizeReportSize, TerminalScrollbar as Scrollbar};
 /// // 4. Another bell to show the counter increments
 /// terminal.vt_write(b"\x07");
 ///
-/// assert_eq!(bell_count.get(), 2);
+/// assert_eq!(bell_count.load(Ordering::Relaxed), 2);
 /// # Ok(())}
 /// ```
 ///
@@ -237,6 +249,140 @@ pub struct Terminal<'alloc: 'cb, 'cb> {
     pub(crate) id: u64,
 }
 
+// SAFETY: libghostty-vt creates no threads, runs every callback on the thread
+// whose call triggered it, and lets a handle be used from any thread as long
+// as calls on it, and on any handle borrowed from it, never run at the same
+// time (vt.h, "Threads"; ghostty b54f31f82). Moving a `Terminal` keeps that:
+//
+// - Its callbacks move with it and then run on the new thread, so the boxed
+//   closures must be `Send`, which every effect callback trait requires.
+// - libghostty calls its allocator from whichever thread uses the terminal.
+//   `Allocator::GLOBAL` is thread-safe, and the only other safe constructor
+//   takes a `Sync` allocator.
+// - Handles borrowed from it in libghostty's sense are borrowed in Rust too
+//   (grid refs, selections, formatters, Kitty storage, snapshots), so they
+//   cannot outlive a move, except tracked grid refs and searches. Every call
+//   of theirs that touches the terminal takes the terminal as an argument,
+//   so it runs on the terminal's thread (`Terminal` is not `Sync`), and
+//   their destructors hand the handle to `Detached` rather than freeing it,
+//   so the free runs on the terminal's thread too. A selection gesture is
+//   freed without its terminal, which touches only the gesture's memory.
+//
+// Not `Sync`: two threads calling into one terminal at once is exactly what
+// libghostty forbids.
+unsafe impl Send for Terminal<'_, '_> {}
+
+/// Tracked grid references and searches whose owners dropped them while
+/// their terminal lives.
+///
+/// Freeing either touches the terminal (it unregisters a pin or a search),
+/// so it must not overlap a call on the terminal, which may be running on
+/// another thread now that a `Terminal` can move. Their destructors queue the
+/// handle here instead, and the terminal frees the queue at its next
+/// exclusive call and when it is dropped. Once the terminal is freed, which
+/// detaches them, a handle frees itself straight away: the free then only
+/// touches the handle's own memory.
+#[derive(Debug, Default)]
+pub(crate) struct Detached {
+    state: Mutex<DetachedState>,
+    // Whether `state.handles` may be non-empty, so that the hot write path
+    // takes no lock when nothing was dropped.
+    pending: AtomicBool,
+}
+
+#[derive(Debug, Default)]
+struct DetachedState {
+    terminal_freed: bool,
+    handles: Vec<DetachedHandle>,
+}
+
+/// A handle that borrows from a terminal in libghostty's sense.
+#[derive(Debug)]
+pub(crate) enum DetachedHandle {
+    TrackedGridRef(NonNull<ffi::TrackedGridRefImpl>),
+    Search(NonNull<ffi::SearchImpl>),
+}
+
+// SAFETY: A queued handle is never used again, only freed, and `Detached`
+// serializes the free with the terminal.
+unsafe impl Send for DetachedHandle {}
+
+impl DetachedHandle {
+    /// # Safety
+    ///
+    /// The handle is live and not used again, and no call on its terminal
+    /// runs during the free (or the terminal is already freed).
+    unsafe fn free(self) {
+        // SAFETY: Per this function's contract.
+        match self {
+            Self::TrackedGridRef(raw) => unsafe {
+                ffi::ghostty_tracked_grid_ref_free(raw.as_ptr());
+            },
+            Self::Search(raw) => unsafe { ffi::ghostty_search_free(raw.as_ptr()) },
+        }
+    }
+}
+
+impl Detached {
+    fn lock(&self) -> MutexGuard<'_, DetachedState> {
+        // Nothing panics while holding the lock, and the state stays valid
+        // even if something did.
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Free `handle` now if its terminal is gone, or queue it for the
+    /// terminal to free. Safe from any thread, and from inside a callback.
+    pub(crate) fn release(&self, handle: DetachedHandle) {
+        let mut state = self.lock();
+        if state.terminal_freed {
+            drop(state);
+            // SAFETY: Freeing the terminal detached the handle, so this
+            // touches only the handle's own memory, and the handle's owner
+            // gave it up.
+            unsafe { handle.free() };
+        } else {
+            state.handles.push(handle);
+            self.pending.store(true, Ordering::Release);
+        }
+    }
+
+    /// Free the queued handles.
+    ///
+    /// # Safety
+    ///
+    /// The caller has exclusive access to the live terminal (it holds the
+    /// owning `&mut Terminal`) and is not inside a libghostty call on it.
+    unsafe fn reap(&self) {
+        if !self.pending.swap(false, Ordering::Acquire) {
+            return;
+        }
+        let handles = std::mem::take(&mut self.lock().handles);
+        for handle in handles {
+            // SAFETY: Per this function's contract, nothing else runs on the
+            // terminal, and a queued handle has no owner left.
+            unsafe { handle.free() };
+        }
+    }
+
+    /// Free the queued handles, then the terminal with `free_terminal`, under
+    /// the lock, so a handle released meanwhile on another thread waits and
+    /// then frees itself against a terminal that is gone.
+    ///
+    /// # Safety
+    ///
+    /// Called once, by the owning terminal's destructor, which has exclusive
+    /// access to it.
+    unsafe fn close(&self, free_terminal: impl FnOnce()) {
+        let mut state = self.lock();
+        for handle in std::mem::take(&mut state.handles) {
+            // SAFETY: As in `reap`.
+            unsafe { handle.free() };
+        }
+        free_terminal();
+        state.terminal_freed = true;
+    }
+}
+
 /// Visual style of the cursor: the default that DECSCUSR reset (CSI 0 q)
 /// returns to, and the style the render state reports.
 #[repr(i32)]
@@ -313,7 +459,17 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     /// the primary goal is to keep the terminal state consistent and not allow
     /// malformed input to corrupt or crash.    
     pub fn vt_write(&mut self, data: &[u8]) {
+        // SAFETY: `&mut self` is exclusive and no libghostty call is running.
+        unsafe { self.detached().reap() };
         unsafe { ffi::ghostty_terminal_vt_write(self.inner.as_raw(), data.as_ptr(), data.len()) }
+    }
+
+    /// The queue for tracked grid references and searches dropped while this
+    /// terminal lives. Shared by the borrowed views callbacks receive.
+    pub(crate) fn detached(&self) -> &Arc<Detached> {
+        // SAFETY: The VTable lives as long as the owning terminal, and the
+        // views passed to callbacks point to the owner's VTable.
+        unsafe { &(*self.vtable).detached }
     }
 
     /// Write VT-encoded data up to and including the first byte that
@@ -378,6 +534,8 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
         data: &[u8],
         boundaries: Boundaries,
     ) -> Result<Option<WriteStop>> {
+        // SAFETY: `&mut self` is exclusive and no libghostty call is running.
+        unsafe { self.detached().reap() };
         let mut stop = ffi::sized!(ffi::TerminalWriteStop);
         // SAFETY: The terminal is valid, `data` is valid for `data.len()`
         // bytes, and `stop` is a sized struct the call writes.
@@ -507,7 +665,7 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
         from_result(result)?;
 
         let inner = NonNull::new(raw).ok_or(Error::InvalidValue)?;
-        Ok(TrackedGridRef::new(inner, self.inner.ptr))
+        Ok(TrackedGridRef::new(inner, self))
     }
 
     /// Convert a grid reference back to a point in the given coordinate system.
@@ -1442,7 +1600,14 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
 }
 impl Drop for Terminal<'_, '_> {
     fn drop(&mut self) {
-        unsafe { ffi::ghostty_terminal_free(self.inner.as_raw()) }
+        let raw = self.inner.as_raw();
+        let free_terminal = || {
+            // SAFETY: The owning terminal frees its handle once, here.
+            unsafe { ffi::ghostty_terminal_free(raw) }
+        };
+        // SAFETY: This is the owning terminal (views are ManuallyDrop), so
+        // the VTable is live and this runs once with exclusive access.
+        unsafe { (*self.vtable).detached.close(free_terminal) };
         // SAFETY: This terminal owns the allocation from Box::into_raw.
         // The native handle can no longer use its userdata. Borrowed callback
         // views are ManuallyDrop and never reach this destructor.
@@ -2362,9 +2527,9 @@ impl<'t> ClipboardRead<'t> {
     ///
     /// The answer is written to the pty before this returns, so the
     /// [pty write callback](Terminal::on_pty_write) runs inside this call. If
-    /// both callbacks share state through a [`RefCell`](std::cell::RefCell),
-    /// don't keep it borrowed across `reply`: the pty write callback's borrow
-    /// would panic, and a panic in a callback aborts the process.
+    /// both callbacks share state through a [`Mutex`],
+    /// don't hold it locked across `reply`: the pty write callback's lock
+    /// would deadlock or panic, and a panic in a callback aborts the process.
     pub fn reply(
         self,
         result: std::result::Result<&[ClipboardReplyContent<'_>], ClipboardReadError>,
@@ -3315,18 +3480,21 @@ macro_rules! handlers {
                 $(for<$lf>)? FnMut(
                     &$($lf)? $crate::terminal::Terminal<'alloc, 'cb>,
                     $($fty),*
-                ) $(-> $rty)? + 'cb {}
+                ) $(-> $rty)? + Send + 'cb {}
 
             impl<'alloc, 'cb, F> $fnty<'alloc, 'cb> for F
             where
                 F: $(for<$lf>)? FnMut(
                     &$($lf)? $crate::terminal::Terminal<'alloc, 'cb>,
                     $($fty),*
-                ) $(-> $rty)? + 'cb
+                ) $(-> $rty)? + Send + 'cb
             {}
         )*
 
         struct VTable<'alloc, 'cb> {
+            // Not a callback: lives here so the views passed to callbacks
+            // reach it through the userdata pointer.
+            detached: ::std::sync::Arc<Detached>,
             $($name: Option<::std::boxed::Box<dyn $fnty<'alloc, 'cb>>>),*
         }
 
@@ -3339,6 +3507,7 @@ macro_rules! handlers {
         impl ::core::default::Default for VTable<'_, '_> {
             fn default() -> Self {
                 Self {
+                    detached: ::std::sync::Arc::default(),
                     $($name: None),*
                 }
             }
@@ -3422,35 +3591,41 @@ handlers! {
     /// aborts the process. If the callback updates the render state, don't
     /// keep the render state borrowed (e.g. through a
     /// [`Snapshot`](crate::render::Snapshot) or a
-    /// [`RefMut`](std::cell::RefMut)) across [`Terminal::vt_write`],
+    /// [`MutexGuard`]) across [`Terminal::vt_write`],
     /// [`Terminal::reset`] or [`Terminal::resize`], since any of them can
-    /// invoke the callback. Use a non-panicking borrow such as
-    /// [`RefCell::try_borrow_mut`](std::cell::RefCell::try_borrow_mut)
-    /// inside the callback.
+    /// invoke the callback. Use a non-blocking, non-panicking lock such as
+    /// [`Mutex::try_lock`] inside the callback.
     ///
     /// </div>
     ///
     /// ```rust
-    /// use std::cell::{Cell, RefCell};
+    /// use std::sync::Mutex;
     /// use std::time::{Duration, Instant};
     /// use libghostty_vt::{RenderState, Terminal, terminal::Mode};
     ///
     /// struct Renderer {
-    ///     render_state: RefCell<RenderState<'static>>,
-    ///     held: Cell<bool>,
-    ///     hold_started: Cell<Instant>,
+    ///     render_state: Mutex<RenderState<'static>>,
+    ///     /// When the current hold began, or `None` without a hold.
+    ///     hold_started: Mutex<Option<Instant>>,
+    /// }
+    ///
+    /// impl Renderer {
+    ///     fn held(&self) -> bool {
+    ///         self.hold_started.lock().unwrap().is_some()
+    ///     }
     /// }
     ///
     /// fn draw(r: &Renderer, terminal: &mut Terminal<'static, '_>) -> libghostty_vt::error::Result<()> {
     ///     // Give up on a program that holds the screen for too long.
-    ///     if r.held.get() && r.hold_started.get().elapsed() >= Duration::from_secs(1) {
+    ///     let started = *r.hold_started.lock().unwrap();
+    ///     if started.is_some_and(|started| started.elapsed() >= Duration::from_secs(1)) {
     ///         terminal.set_mode(Mode::SYNC_OUTPUT, false)?;
-    ///         r.held.set(false);
+    ///         *r.hold_started.lock().unwrap() = None;
     ///     }
     ///
     ///     // During a hold, skip the update and draw the captured frame.
-    ///     if !r.held.get() {
-    ///         r.render_state.borrow_mut().update(terminal)?;
+    ///     if !r.held() {
+    ///         r.render_state.lock().unwrap().update(terminal)?;
     ///     }
     ///     // draw_render_state(&r.render_state);
     ///     Ok(())
@@ -3458,32 +3633,31 @@ handlers! {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let renderer = Renderer {
-    ///     render_state: RefCell::new(RenderState::new()?),
-    ///     held: Cell::new(false),
-    ///     hold_started: Cell::new(Instant::now()),
+    ///     render_state: Mutex::new(RenderState::new()?),
+    ///     hold_started: Mutex::new(None),
     /// };
     ///
     /// let mut terminal = Terminal::new(80, 24)?;
     /// terminal.on_render_hold(|term, held| {
     ///     if held {
     ///         // Capture the frame the program wants left on screen. Don't
-    ///         // panic if that fails, e.g. because the render state is
-    ///         // borrowed elsewhere; keep drawing the previous frame instead.
-    ///         let _ = renderer
-    ///             .render_state
-    ///             .try_borrow_mut()
-    ///             .map(|mut state| state.update(term).map(|_| ()));
-    ///         renderer.hold_started.set(Instant::now());
+    ///         // block or panic if that fails, e.g. because the render state
+    ///         // is locked elsewhere; keep drawing the previous frame instead.
+    ///         if let Ok(mut state) = renderer.render_state.try_lock() {
+    ///             let _ = state.update(term);
+    ///         }
     ///     }
-    ///     renderer.held.set(held);
+    ///     if let Ok(mut started) = renderer.hold_started.try_lock() {
+    ///         *started = held.then(Instant::now);
+    ///     }
     /// })?;
     ///
     /// terminal.vt_write(b"\x1b[?2026h");
-    /// assert!(renderer.held.get());
+    /// assert!(renderer.held());
     /// draw(&renderer, &mut terminal)?;
     ///
     /// terminal.vt_write(b"\x1b[?2026l");
-    /// assert!(!renderer.held.get());
+    /// assert!(!renderer.held());
     /// draw(&renderer, &mut terminal)?;
     /// # Ok(())
     /// # }
@@ -3517,8 +3691,9 @@ handlers! {
     ///
     /// Like every callback, this runs on the thread that called
     /// [`Terminal::vt_write`], [`Terminal::reset`] or [`Terminal::resize`].
-    /// Since neither a terminal nor a render state can be sent to another
-    /// thread, the update in the callback needs no locking.
+    /// A terminal and a render state can move to another thread (both are
+    /// [`Send`]), so the callback shares the render state through a
+    /// [`Mutex`] as above.
     pub fn on_render_hold(
         &mut self,
         tag = RENDER_HOLD,
@@ -3791,14 +3966,14 @@ handlers! {
     /// storage:
     ///
     /// ```rust
-    /// use std::cell::RefCell;
+    /// use std::sync::Mutex;
     /// use std::collections::HashMap;
     /// use libghostty_vt::{Terminal, terminal::ProgramStatusState};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // One record per id. This one keeps only the state and message.
-    /// let records = RefCell::new(HashMap::<Vec<u8>, (ProgramStatusState, Vec<u8>)>::new());
-    /// # let pty = RefCell::new(Vec::new());
+    /// let records = Mutex::new(HashMap::<Vec<u8>, (ProgramStatusState, Vec<u8>)>::new());
+    /// # let pty = Mutex::new(Vec::new());
     ///
     /// let mut terminal = Terminal::new(80, 24)?;
     /// // Set a pty write callback too, so programs that check for support
@@ -3806,13 +3981,13 @@ handlers! {
     /// terminal
     ///     .on_pty_write(|_term, bytes| {
     ///         // Write `bytes` back to the pty.
-    /// #       pty.borrow_mut().extend_from_slice(bytes);
+    /// #       pty.lock().unwrap().extend_from_slice(bytes);
     ///     })?
     ///     .on_program_status(|_term, report| {
     ///         // A panic in the callback aborts the process, so ignore a
     ///         // state these bindings don't know instead of unwrapping.
     ///         let Ok(state) = report.state() else { return };
-    ///         let mut records = records.borrow_mut();
+    ///         let Ok(mut records) = records.lock() else { return };
     ///
     ///         if state == ProgramStatusState::Clear {
     ///             // Remove this record and every record beneath it. An empty
@@ -3832,7 +4007,7 @@ handlers! {
     ///         records.insert(report.id().to_vec(), (state, report.message().to_vec()));
     ///     })?;
     /// # let ids = || {
-    /// #     let mut ids: Vec<_> = records.borrow().keys().cloned().collect();
+    /// #     let mut ids: Vec<_> = records.lock().unwrap().keys().cloned().collect();
     /// #     ids.sort();
     /// #     ids
     /// # };
@@ -3844,13 +4019,13 @@ handlers! {
     /// terminal.vt_write(b"\x1b]7501;state=done:id=buildx\x1b\\");
     /// # assert_eq!(ids(), [&b""[..], b"build", b"build/test", b"buildx"]);
     /// # assert_eq!(
-    /// #     records.borrow()[&b""[..]],
+    /// #     records.lock().unwrap()[&b""[..]],
     /// #     (ProgramStatusState::Working, b"Building".to_vec()),
     /// # );
     ///
     /// // A report replaces its record completely, so the message is gone.
     /// terminal.vt_write(b"\x1b]7501;state=done\x1b\\");
-    /// # assert_eq!(records.borrow()[&b""[..]], (ProgramStatusState::Done, Vec::new()));
+    /// # assert_eq!(records.lock().unwrap()[&b""[..]], (ProgramStatusState::Done, Vec::new()));
     ///
     /// // Clearing "build" also removes "build/test", but not "buildx".
     /// terminal.vt_write(b"\x1b]7501;state=clear:id=build\x1b\\");
@@ -3858,11 +4033,11 @@ handlers! {
     ///
     /// // A program checking for support gets a reply through the pty.
     /// terminal.vt_write(b"\x1b]7501;?\x1b\\");
-    /// # assert!(pty.borrow().starts_with(b"\x1b]7501;?:states="));
+    /// # assert!(pty.lock().unwrap().starts_with(b"\x1b]7501;?:states="));
     ///
     /// // A full reset removes every record.
     /// terminal.vt_write(b"\x1bc");
-    /// # assert!(records.borrow().is_empty());
+    /// # assert!(records.lock().unwrap().is_empty());
     /// # Ok(())
     /// # }
     /// ```
@@ -3916,11 +4091,11 @@ handlers! {
     /// Example, logging each command's result:
     ///
     /// ```rust
-    /// use std::cell::RefCell;
+    /// use std::sync::Mutex;
     /// use libghostty_vt::{Terminal, terminal::SemanticPromptKind};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let results = RefCell::new(Vec::new());
+    /// let results = Mutex::new(Vec::new());
     ///
     /// let mut terminal = Terminal::new(80, 24)?;
     /// terminal.on_semantic_prompt(|_term, event| {
@@ -3929,7 +4104,7 @@ handlers! {
     ///     if let Ok(SemanticPromptKind::CommandEnd) = event.kind() {
     ///         // Many shells don't report the exit code, so this may be
     ///         // `None` even for a command that ran.
-    ///         results.borrow_mut().push(event.exit_code());
+    ///         results.lock().unwrap().push(event.exit_code());
     ///     }
     /// })?;
     ///
@@ -3937,7 +4112,7 @@ handlers! {
     /// // didn't say how it went.
     /// terminal.vt_write(b"\x1b]133;D;1\x07");
     /// terminal.vt_write(b"\x1b]133;D\x07");
-    /// assert_eq!(*results.borrow(), [Some(1), None]);
+    /// assert_eq!(*results.lock().unwrap(), [Some(1), None]);
     /// # Ok(())
     /// # }
     /// ```
@@ -3987,26 +4162,27 @@ handlers! {
     /// Without this callback, resize requests are ignored.
     ///
     /// ```rust
-    /// use std::{cell::Cell, num::NonZeroU16};
+    /// use std::{num::NonZeroU16, sync::Mutex};
     /// use libghostty_vt::{Terminal, terminal::ResizeWindow};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let requested = Cell::new(None);
+    /// let requested = Mutex::new(None);
     ///
     /// let mut terminal = Terminal::new(80, 24)?;
     /// terminal.on_resize_window(|_term, request| match request {
-    ///     ResizeWindow::Grid { rows, columns } => requested.set(Some((rows, columns))),
+    ///     ResizeWindow::Grid { rows, columns } => *requested.lock().unwrap() = Some((rows, columns)),
     ///     // Ignore kinds of requests you don't handle.
     ///     _ => {}
     /// })?;
     ///
     /// terminal.vt_write(b"\x1b[8;30;100t");
-    /// # assert_eq!(requested.get(), Some((NonZeroU16::new(30), NonZeroU16::new(100))));
+    /// # assert_eq!(*requested.lock().unwrap(), Some((NonZeroU16::new(30), NonZeroU16::new(100))));
     ///
     /// // The terminal itself keeps its size. Apply the request yourself
     /// // (`None` means keep the current size of that dimension).
     /// # assert_eq!((terminal.cols()?, terminal.rows()?), (80, 24));
-    /// if let Some((rows, columns)) = requested.take() {
+    /// let request = requested.lock().unwrap().take();
+    /// if let Some((rows, columns)) = request {
     ///     let rows = rows.map_or(terminal.rows()?, NonZeroU16::get);
     ///     let cols = columns.map_or(terminal.cols()?, NonZeroU16::get);
     ///     terminal.resize(cols, rows, 8, 16)?;
@@ -4075,11 +4251,11 @@ handlers! {
     /// the program expects.
     ///
     /// ```rust
-    /// use std::cell::RefCell;
+    /// use std::sync::Mutex;
     /// use libghostty_vt::{Terminal, terminal::UnknownSequence};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let statuses = RefCell::new(Vec::new());
+    /// let statuses = Mutex::new(Vec::new());
     ///
     /// let mut terminal = Terminal::new(80, 24)?;
     /// terminal
@@ -4095,14 +4271,14 @@ handlers! {
     ///         if let Some(status) = content.strip_prefix(b"7400;") {
     ///             // The content is only valid during this call. Copy it if you need it
     ///             // later.
-    ///             statuses.borrow_mut().push(status.to_vec());
+    ///             statuses.lock().unwrap().push(status.to_vec());
     ///         }
     ///     })?
     ///     // Keep up to 4 KiB of each unknown sequence and report them.
     ///     .set_unknown_max_bytes(4096)?;
     ///
     /// terminal.vt_write(b"\x1b]7400;status=busy\x07");
-    /// assert_eq!(*statuses.borrow(), [b"status=busy".to_vec()]);
+    /// assert_eq!(*statuses.lock().unwrap(), [b"status=busy".to_vec()]);
     /// # Ok(())
     /// # }
     /// ```
@@ -4127,7 +4303,8 @@ handlers! {
 mod tests {
     use super::*;
     use crate::RenderState;
-    use std::cell::{Cell, RefCell};
+    // `Sync` stand-ins: effect callbacks must be `Send`.
+    use crate::sync_cell::{Cell, RefCell};
     use std::mem::ManuallyDrop;
 
     /// What a clipboard read callback observed about its request.
@@ -4149,7 +4326,7 @@ mod tests {
     /// abort the whole test binary instead of failing the test.
     fn clipboard_read(
         input: &[u8],
-        answer: impl Fn(ClipboardRead<'_>),
+        answer: impl Fn(ClipboardRead<'_>) + Sync,
     ) -> (Vec<SeenRead>, Vec<u8>) {
         let seen = RefCell::new(Vec::new());
         let output = RefCell::new(Vec::new());
@@ -5812,14 +5989,14 @@ mod tests {
 
         terminal.vt_write(b"\r\ndelta");
 
-        assert!(tracked.has_value());
+        assert!(tracked.has_value(&terminal).unwrap());
         assert_eq!(
             codepoint_at_tracked_ref(&terminal, &tracked),
             u32::from('a')
         );
         assert_eq!(
             tracked
-                .point(PointSpace::Screen)
+                .point(&terminal, PointSpace::Screen)
                 .expect("tracked point should resolve")
                 .expect("tracked point should have a value")
                 .x,
@@ -5838,7 +6015,7 @@ mod tests {
 
         terminal.reset();
 
-        assert!(!tracked.has_value());
+        assert!(!tracked.has_value(&terminal).unwrap());
         assert!(
             tracked
                 .snapshot(&terminal)
@@ -5847,7 +6024,7 @@ mod tests {
         );
         assert!(
             tracked
-                .point(PointSpace::Screen)
+                .point(&terminal, PointSpace::Screen)
                 .expect("missing tracked point should not fail")
                 .is_none()
         );
@@ -5857,7 +6034,7 @@ mod tests {
             .set(&mut terminal, Point::Active(PointCoordinate { x: 0, y: 0 }))
             .expect("tracked grid ref should set to a new point");
 
-        assert!(tracked.has_value());
+        assert!(tracked.has_value(&terminal).unwrap());
         assert_eq!(
             codepoint_at_tracked_ref(&terminal, &tracked),
             u32::from('e')
@@ -5874,13 +6051,45 @@ mod tests {
                 .expect("tracked grid ref should initialize")
         };
 
-        assert!(!tracked.has_value());
-        assert!(
-            tracked
-                .point(PointSpace::Screen)
-                .expect("detached tracked point should not fail")
-                .is_none()
-        );
+        // Another terminal is not the one that created it.
+        let other = tiny_terminal();
+        assert!(matches!(
+            tracked.has_value(&other),
+            Err(Error::InvalidValue)
+        ));
+        // Dropping it after its terminal frees it without touching the
+        // terminal, which is gone.
+        drop(tracked);
+    }
+
+    /// A tracked reference or search dropped while its terminal lives is
+    /// freed by the terminal (at its next write, or when it is dropped), so
+    /// the drop works from a thread the terminal is not on.
+    #[test]
+    fn tracked_grid_refs_and_searches_dropped_elsewhere_are_freed_by_the_terminal() {
+        let mut terminal = tiny_terminal();
+        terminal.vt_write(b"alpha\r\nbravo");
+        let tracked = terminal
+            .track_grid_ref(Point::Active(PointCoordinate { x: 0, y: 0 }))
+            .unwrap();
+        let search = crate::search::Search::new(&mut terminal).unwrap();
+
+        // Move the terminal to another thread and drop the handles here while
+        // it writes there.
+        let writer = std::thread::spawn(move || {
+            for _ in 0..100 {
+                terminal.vt_write(b"\r\ncharlie");
+            }
+            terminal
+        });
+        drop(tracked);
+        drop(search);
+        let mut terminal = writer.join().unwrap();
+
+        // Whatever the next write found queued, it freed.
+        terminal.vt_write(b"x");
+        assert!(!terminal.detached().pending.load(Ordering::Acquire));
+        assert!(terminal.detached().lock().handles.is_empty());
     }
 
     #[test]
@@ -6313,7 +6522,7 @@ mod miri_soundness {
 
     #[test]
     fn moved_terminal_callbacks_and_destruction() {
-        use std::cell::Cell;
+        use crate::sync_cell::Cell;
         struct CountDrop<'a>(&'a Cell<usize>);
         impl Drop for CountDrop<'_> {
             fn drop(&mut self) {
@@ -6360,7 +6569,7 @@ mod miri_soundness {
 
     #[test]
     fn moved_terminal_nested_clipboard_reply() {
-        let order = std::cell::RefCell::new(Vec::new());
+        let order = crate::sync_cell::RefCell::new(Vec::new());
         let mut terminal = Terminal::new(8, 2).unwrap();
         terminal
             .on_pty_write(|_, bytes| {
@@ -6388,7 +6597,7 @@ mod miri_soundness {
     /// conversion inside `extern "C"`), while still delivering known tags.
     #[test]
     fn resize_window_skips_unknown_tags() {
-        let seen = std::cell::RefCell::new(Vec::new());
+        let seen = crate::sync_cell::RefCell::new(Vec::new());
         let mut terminal = Terminal::new(8, 2).unwrap();
         terminal
             .on_resize_window(|_, request| seen.borrow_mut().push(request))
@@ -6414,7 +6623,7 @@ mod miri_soundness {
     /// terminator it doesn't know, while still delivering known ones.
     #[test]
     fn unknown_sequence_skips_unknown_tags_and_terminators() {
-        let seen = std::cell::RefCell::new(Vec::new());
+        let seen = crate::sync_cell::RefCell::new(Vec::new());
         let mut terminal = Terminal::new(8, 2).unwrap();
         terminal
             .on_unknown_sequence(|_, sequence| {

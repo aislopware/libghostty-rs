@@ -3,14 +3,19 @@
 //! These types represent the contents of a terminal screen.
 //! A [`Cell`] is a single grid cell and a [`Row`] is a single row.
 //! Both are opaque values whose fields are accessed via their methods.
-use std::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull, sync::OnceLock};
+use std::{
+    marker::PhantomData,
+    mem::MaybeUninit,
+    ptr::NonNull,
+    sync::{Arc, OnceLock},
+};
 
 use crate::{
     error::{Error, Result, from_optional_result_uninit, from_result, from_result_with_len},
     ffi,
     manifest::{self, Value},
     style::{self, PaletteIndex, RgbColor, Style},
-    terminal::{Point, PointCoordinate, PointSpace, Terminal},
+    terminal::{Detached, DetachedHandle, Point, PointCoordinate, PointSpace, Terminal},
 };
 
 /// Terminal screen identifier.
@@ -155,7 +160,14 @@ impl GridRef<'_> {
 /// and may move the tracked reference between screens.
 ///
 /// If the tracked grid reference outlives the terminal it is created from,
-/// it remains valid, but all APIs return either `false` or `Ok(None)`.
+/// it remains valid, but it can no longer be read: every method takes the
+/// terminal, and rejects any other with [`Error::InvalidValue`].
+///
+/// Every method that reads or moves the reference takes its terminal, since
+/// the terminal updates the reference whenever it changes: the call then runs
+/// wherever the terminal is, even after the terminal moved to another thread.
+/// Dropping the reference while its terminal lives queues it for the terminal
+/// to free at its next write or when it is dropped.
 ///
 /// Each tracked reference adds bookkeeping to terminal mutations. Use them
 /// sparingly for long-lived anchors such as selections, search state, marks,
@@ -163,24 +175,41 @@ impl GridRef<'_> {
 #[derive(Debug)]
 pub struct TrackedGridRef {
     inner: NonNull<ffi::TrackedGridRefImpl>,
-    terminal: NonNull<ffi::TerminalImpl>,
+    /// The creating terminal's release queue, which doubles as its identity:
+    /// held here, its allocation can't be reused by another terminal.
+    detached: Arc<Detached>,
 }
 
 impl TrackedGridRef {
     pub(crate) fn new(
         inner: NonNull<ffi::TrackedGridRefImpl>,
-        terminal: NonNull<ffi::TerminalImpl>,
+        terminal: &Terminal<'_, '_>,
     ) -> Self {
-        Self { inner, terminal }
+        Self {
+            inner,
+            detached: Arc::clone(terminal.detached()),
+        }
+    }
+
+    /// Reject a terminal other than the one that created this reference.
+    ///
+    /// The C functions that read a tracked reference don't take a terminal;
+    /// requiring it here keeps every read on the terminal's thread and
+    /// ordered with the terminal's own updates to the reference.
+    fn check_terminal(&self, terminal: &Terminal<'_, '_>) -> Result<()> {
+        if Arc::ptr_eq(&self.detached, terminal.detached()) {
+            Ok(())
+        } else {
+            Err(Error::InvalidValue)
+        }
     }
 
     /// Whether a tracked grid reference currently has a meaningful value.
-    ///
-    /// If the terminal that created the tracked reference has been dropped,
-    /// this returns false.
-    #[must_use]
-    pub fn has_value(&self) -> bool {
-        unsafe { ffi::ghostty_tracked_grid_ref_has_value(self.inner.as_ptr()) }
+    pub fn has_value(&self, terminal: &Terminal<'_, '_>) -> Result<bool> {
+        self.check_terminal(terminal)?;
+        // SAFETY: The reference is live, and the terminal borrow orders the
+        // read with the terminal's updates to it.
+        Ok(unsafe { ffi::ghostty_tracked_grid_ref_has_value(self.inner.as_ptr()) })
     }
 
     /// Snapshot a tracked grid reference into a regular [`GridRef`].
@@ -196,9 +225,7 @@ impl TrackedGridRef {
         // The C ghostty_tracked_grid_ref_snapshot does not take a terminal, so
         // we validate the pairing here to keep the returned GridRef's lifetime
         // soundly tied to a terminal that actually owns the underlying pin.
-        if self.terminal != terminal.inner.ptr {
-            return Err(Error::InvalidValue);
-        }
+        self.check_terminal(terminal)?;
         let mut grid_ref = MaybeUninit::new(ffi::GridRef::default());
         let result = unsafe {
             ffi::ghostty_tracked_grid_ref_snapshot(self.inner.as_ptr(), grid_ref.as_mut_ptr())
@@ -227,10 +254,14 @@ impl TrackedGridRef {
     /// set, this may be different from the terminal's currently active screen.
     ///
     /// If the tracked reference no longer has a meaningful value, this returns
-    /// `Ok(None)`. `Ok(None` is also returned when the reference cannot be represented
-    /// in the requested coordinate space, including after the terminal that
-    /// created the tracked reference has been dropped.
-    pub fn point(&self, space: PointSpace) -> Result<Option<PointCoordinate>> {
+    /// `Ok(None)`. `Ok(None)` is also returned when the reference cannot be
+    /// represented in the requested coordinate space.
+    pub fn point(
+        &self,
+        terminal: &Terminal<'_, '_>,
+        space: PointSpace,
+    ) -> Result<Option<PointCoordinate>> {
+        self.check_terminal(terminal)?;
         let mut point = MaybeUninit::<ffi::PointCoordinate>::zeroed();
         let result = unsafe {
             ffi::ghostty_tracked_grid_ref_point(
@@ -270,9 +301,25 @@ impl TrackedGridRef {
     }
 }
 
+// SAFETY: Every call that reads or moves the reference takes its terminal
+// and checks its identity before touching the reference, so the call runs
+// wherever the terminal is and is ordered with the terminal's own updates to
+// the reference (`Terminal` is `Send` but not `Sync`, so a `&Terminal` is on
+// one thread at a time). The drop hands the reference to the terminal to
+// free, or frees it directly once the terminal is gone, which
+// grid_ref_tracked.h allows.
+unsafe impl Send for TrackedGridRef {}
+// SAFETY: As above: shared access only reads through the terminal, which
+// serializes it.
+unsafe impl Sync for TrackedGridRef {}
+
 impl Drop for TrackedGridRef {
     fn drop(&mut self) {
-        unsafe { ffi::ghostty_tracked_grid_ref_free(self.inner.as_ptr()) }
+        // Freeing unregisters the pin from the terminal, which may be busy on
+        // another thread: the terminal frees it, or it frees itself once the
+        // terminal is gone.
+        self.detached
+            .release(DetachedHandle::TrackedGridRef(self.inner));
     }
 }
 

@@ -8,8 +8,8 @@
 
 #![deny(unsafe_code)] // Well, almost.
 use std::{
-    cell::Cell,
     collections::HashMap,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -94,11 +94,12 @@ async fn main() -> Result<()> {
 
     // Track window size so we only recalculate the grid on actual changes.
     //
-    // This is kept in a Cell<T> since the terminal effect handler
+    // This is kept in a Mutex<T> since the terminal effect handler
     // has to keep a reference to it, and we also want to modify it in the
-    // main loop below. Don't worry, this is completely safe and is just
-    // here to make the Rust compiler happy.
-    let grid_size = Cell::new((cols, rows));
+    // main loop below. Effect handlers must be `Send` (a terminal can move
+    // to another thread), so a `Cell` won't do. The lock is never contended:
+    // this example drives the terminal from the main thread only.
+    let grid_size = Mutex::new((cols, rows));
 
     // Spawn a child shell connected to a pseudo-terminal.
     let (pty, mut child) = Pty::new(dims)?;
@@ -154,7 +155,7 @@ async fn main() -> Result<()> {
         .on_size({
             let gs = &grid_size;
             move |_term| {
-                let (columns, rows) = gs.get();
+                let (columns, rows) = *gs.lock().unwrap();
                 Some(SizeReportSize {
                     rows,
                     columns,
@@ -233,7 +234,7 @@ async fn main() -> Result<()> {
         // can send SIGWINCH to its foreground process group).
         if dims.update() {
             let (cols, rows) = dims.grid_size();
-            grid_size.set((cols, rows));
+            *grid_size.lock().unwrap() = (cols, rows);
             terminal.resize(cols, rows, dims.cell_width as u32, dims.cell_height as u32)?;
             pty.resize(dims);
         }
@@ -1298,11 +1299,11 @@ impl SelectionState<'_> {
         let point = Input::mouse_viewport_point(terminal, dims)?;
         let grid_ref = terminal.grid_ref(point)?;
         let geometry = Geometry {
-                columns: terminal.cols()?.into(),
-                cell_width: dims.cell_width as u32,
-                padding_left: PADDING as u32,
-                screen_height: dims.window_height as u32,
-            };
+            columns: terminal.cols()?.into(),
+            cell_width: dims.cell_width as u32,
+            padding_left: PADDING as u32,
+            screen_height: dims.window_height as u32,
+        };
 
         let selection = self
             .drag_event

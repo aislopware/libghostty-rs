@@ -5,7 +5,10 @@
 // These call into libghostty, which Miri cannot execute.
 #![cfg(all(feature = "kitty-graphics", not(miri)))]
 
-use std::{cell::RefCell, io::Write, rc::Rc};
+use std::{
+    io::Write,
+    sync::{Arc, Mutex},
+};
 
 use libghostty_vt::{
     Terminal,
@@ -52,15 +55,15 @@ impl Drop for OnePixel {
 
 /// Transmit a 1x1 PNG and return the terminal's reply.
 fn transmit_png() -> String {
-    let replies = Rc::new(RefCell::new(Vec::new()));
+    let replies = Arc::new(Mutex::new(Vec::new()));
     let mut terminal = Terminal::new(80, 24).unwrap();
     terminal.resize(80, 24, 8, 16).unwrap();
     terminal
         .set_kitty_image_storage_limit(64 * 1024 * 1024)
         .unwrap();
-    let sink = Rc::clone(&replies);
+    let sink = Arc::clone(&replies);
     terminal
-        .on_pty_write(move |_, data| sink.borrow_mut().extend_from_slice(data))
+        .on_pty_write(move |_, data| sink.lock().unwrap().extend_from_slice(data))
         .unwrap();
     terminal.vt_write(
         b"\x1b_Ga=t,f=100,i=1;\
@@ -68,7 +71,7 @@ fn transmit_png() -> String {
           DUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==\
           \x1b\\",
     );
-    String::from_utf8_lossy(&replies.borrow()).into_owned()
+    String::from_utf8_lossy(&replies.lock().unwrap()).into_owned()
 }
 
 #[test]

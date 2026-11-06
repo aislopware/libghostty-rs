@@ -1,9 +1,9 @@
 use std::{error::Error, io};
 
 use libghostty_vt::{
+    Terminal,
     screen::TrackedGridRef,
     terminal::{Point, PointCoordinate, PointSpace},
-    Terminal,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -35,14 +35,17 @@ fn main() -> Result<()> {
     // The tracked ref still follows the same cell.
     terminal.vt_write(b"\r\ndelta");
 
-    assert!(tracked.has_value(), "tracked ref should survive scrolling");
+    assert!(
+        tracked.has_value(&terminal)?,
+        "tracked ref should survive scrolling"
+    );
     println!(
         "tracked codepoint after scroll: {}",
         codepoint_at_tracked_ref(&terminal, &tracked)?
     );
 
     let screen = tracked
-        .point(PointSpace::Screen)?
+        .point(&terminal, PointSpace::Screen)?
         .ok_or_else(|| io::Error::other("tracked grid reference has no screen point"))?;
     println!("tracked screen point: {},{}", screen.x, screen.y);
 
@@ -50,7 +53,7 @@ fn main() -> Result<()> {
     // handle remains valid, but no longer has a meaningful location.
     terminal.reset();
     assert!(
-        !tracked.has_value(),
+        !tracked.has_value(&terminal)?,
         "tracked ref should lose its value after reset"
     );
     assert!(
@@ -64,7 +67,7 @@ fn main() -> Result<()> {
     let echo = Point::Active(PointCoordinate { x: 0, y: 0 });
     tracked.set(&mut terminal, echo)?;
     assert!(
-        tracked.has_value(),
+        tracked.has_value(&terminal)?,
         "tracked ref should have a value after set"
     );
     println!(
