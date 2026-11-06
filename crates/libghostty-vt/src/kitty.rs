@@ -1,8 +1,6 @@
-//! Handling various protocols pioneered by Kitty,
-//! including the [Kitty graphics protocol](graphics) and drops through the
-//! [Kitty drag and drop protocol](dnd).
+//! Handling various protocols pioneered by Kitty, including the
+//! [Kitty graphics protocol](graphics).
 
-pub mod dnd;
 pub mod graphics;
 
 #[cfg(feature = "kitty-graphics")]

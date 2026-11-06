@@ -33,8 +33,11 @@ pub extern "C" fn run() {
     }
     layout!(String, ptr, len);
     layout!(Allocator, ctx, vtable);
-    layout!(AllocatorVtable, alloc, resize, remap, free);
-    layout!(FormatterTerminalOptions, size, emit, unwrap, trim, extra);
+    layout!(AllocatorVtable, alloc, resize, remap, free, reserved);
+    layout!(Buffer, ptr, cap, len);
+    // Frozen structs mixing widths: nested refs, a bool, a bitfield word.
+    layout!(Selection, start, end, rectangle);
+    layout!(Style, fg_color, bg_color, underline_color, flags);
 
     // Keep Rust-owned memory alive while Zig grows and uses its own heap.
     let guard = vec![0x5au8; 256 * 1024];

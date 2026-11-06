@@ -132,42 +132,63 @@ pub enum Underline {
 // Conversion to and from FFI types
 //----------------------------------
 
+// The flag bits of `GhosttyStyle::flags`. The C header defines them as
+// casts (`(GhosttyStyleFlags)(1u << 0)`), which bindgen cannot evaluate, so
+// they are spelled out here. The values are frozen ABI.
+const FLAG_BOLD: ffi::StyleFlags = 1 << 0;
+const FLAG_ITALIC: ffi::StyleFlags = 1 << 1;
+const FLAG_FAINT: ffi::StyleFlags = 1 << 2;
+const FLAG_BLINK: ffi::StyleFlags = 1 << 3;
+const FLAG_INVERSE: ffi::StyleFlags = 1 << 4;
+const FLAG_INVISIBLE: ffi::StyleFlags = 1 << 5;
+const FLAG_STRIKETHROUGH: ffi::StyleFlags = 1 << 6;
+const FLAG_OVERLINE: ffi::StyleFlags = 1 << 7;
+const UNDERLINE_SHIFT: u32 = 8;
+const UNDERLINE_MASK: ffi::StyleFlags = 0x7 << UNDERLINE_SHIFT;
+
 impl TryFrom<ffi::Style> for Style {
     type Error = Error;
     fn try_from(value: ffi::Style) -> Result<Self> {
+        let flag = |bit: ffi::StyleFlags| value.flags & bit != 0;
+        let underline = i32::from((value.flags & UNDERLINE_MASK) >> UNDERLINE_SHIFT);
         Ok(Self {
             fg_color: StyleColor::try_from(value.fg_color)?,
             bg_color: StyleColor::try_from(value.bg_color)?,
             underline_color: StyleColor::try_from(value.underline_color)?,
-            bold: value.bold,
-            italic: value.italic,
-            faint: value.faint,
-            blink: value.blink,
-            inverse: value.inverse,
-            invisible: value.invisible,
-            strikethrough: value.strikethrough,
-            overline: value.overline,
-            underline: Underline::try_from(value.underline).map_err(|_| Error::InvalidValue)?,
+            bold: flag(FLAG_BOLD),
+            italic: flag(FLAG_ITALIC),
+            faint: flag(FLAG_FAINT),
+            blink: flag(FLAG_BLINK),
+            inverse: flag(FLAG_INVERSE),
+            invisible: flag(FLAG_INVISIBLE),
+            strikethrough: flag(FLAG_STRIKETHROUGH),
+            overline: flag(FLAG_OVERLINE),
+            underline: Underline::try_from(underline).map_err(|_| Error::InvalidValue)?,
         })
     }
 }
 
 impl From<Style> for ffi::Style {
     fn from(value: Style) -> Self {
+        let flag = |set: bool, bit: ffi::StyleFlags| if set { bit } else { 0 };
+        // Every `Underline` is one of the SGR underline values 0 through 5,
+        // which fit the three bits.
+        let underline = ffi::StyleFlags::try_from(i32::from(value.underline))
+            .expect("underline styles are small non-negative values");
         Self {
-            size: std::mem::size_of::<Self>(),
             fg_color: value.fg_color.into(),
             bg_color: value.bg_color.into(),
             underline_color: value.underline_color.into(),
-            bold: value.bold,
-            italic: value.italic,
-            faint: value.faint,
-            blink: value.blink,
-            inverse: value.inverse,
-            invisible: value.invisible,
-            strikethrough: value.strikethrough,
-            overline: value.overline,
-            underline: i32::from(value.underline),
+            flags: flag(value.bold, FLAG_BOLD)
+                | flag(value.italic, FLAG_ITALIC)
+                | flag(value.faint, FLAG_FAINT)
+                | flag(value.blink, FLAG_BLINK)
+                | flag(value.inverse, FLAG_INVERSE)
+                | flag(value.invisible, FLAG_INVISIBLE)
+                | flag(value.strikethrough, FLAG_STRIKETHROUGH)
+                | flag(value.overline, FLAG_OVERLINE)
+                | ((underline << UNDERLINE_SHIFT) & UNDERLINE_MASK),
+            reserved: 0,
         }
     }
 }
@@ -175,7 +196,9 @@ impl From<Style> for ffi::Style {
 impl TryFrom<ffi::StyleColor> for StyleColor {
     type Error = Error;
     fn try_from(value: ffi::StyleColor) -> Result<Self> {
-        Ok(match value.tag {
+        // The tag is one byte in the frozen struct; the tag values are the
+        // `int`-typed enum constants.
+        Ok(match ffi::StyleColorTag::Type::from(value.tag) {
             ffi::StyleColorTag::NONE => Self::None,
             ffi::StyleColorTag::PALETTE => {
                 Self::Palette(PaletteIndex(unsafe { value.value.palette }))
@@ -188,19 +211,24 @@ impl TryFrom<ffi::StyleColor> for StyleColor {
 
 impl From<StyleColor> for ffi::StyleColor {
     fn from(value: StyleColor) -> Self {
-        match value {
-            StyleColor::None => Self {
-                tag: ffi::StyleColorTag::NONE,
-                value: ffi::StyleColorValue::default(),
-            },
-            StyleColor::Palette(PaletteIndex(palette)) => Self {
-                tag: ffi::StyleColorTag::PALETTE,
-                value: ffi::StyleColorValue { palette },
-            },
-            StyleColor::Rgb(rgb) => Self {
-                tag: ffi::StyleColorTag::RGB,
-                value: ffi::StyleColorValue { rgb: rgb.into() },
-            },
+        // Start from all-zero bytes: the header says an unset color is all
+        // zero, and a palette index fills only the first of the three value
+        // bytes, which must not be left uninitialized.
+        let mut color = ffi::StyleColorValue::default();
+        let tag = match value {
+            StyleColor::None => ffi::StyleColorTag::NONE,
+            StyleColor::Palette(PaletteIndex(palette)) => {
+                color.palette = palette;
+                ffi::StyleColorTag::PALETTE
+            }
+            StyleColor::Rgb(rgb) => {
+                color.rgb = rgb.into();
+                ffi::StyleColorTag::RGB
+            }
+        };
+        Self {
+            tag: u8::try_from(tag).expect("style color tags fit the one-byte field"),
+            value: color,
         }
     }
 }

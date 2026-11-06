@@ -15,6 +15,13 @@ use crate::{
     ffi,
 };
 
+/// The vtable's reserved slots, which libghostty-vt requires to be NULL so that
+/// it can add operations later without breaking the ABI. A named const keeps
+/// every vtable literal promotable to `'static` (a call to `null_mut` in a
+/// function body would not be), and a `const` vtable rather than a `static`
+/// because the raw pointers make the struct `!Sync`.
+pub(crate) const RESERVED_VTABLE_SLOTS: [*mut c_void; 4] = [std::ptr::null_mut(); 4];
+
 /// A custom allocator that libghostty uses for its memory allocations.
 ///
 /// The allocator may depend on some external state for the
@@ -240,6 +247,7 @@ impl Allocator<'static> {
             vtable: &ffi::AllocatorVtable {
                 alloc: Some(_global_alloc),
                 free: Some(_global_free),
+                reserved: RESERVED_VTABLE_SLOTS,
                 resize: Some(_global_resize),
                 remap: Some(_global_remap),
             },
@@ -316,6 +324,7 @@ impl<'ctx, A: alloc::Allocator> From<&'ctx A> for Allocator<'ctx> {
                 vtable: &ffi::AllocatorVtable {
                     alloc: Some(_alloc::<A>),
                     free: Some(_free::<A>),
+                    reserved: RESERVED_VTABLE_SLOTS,
                     resize: Some(_resize),
                     remap: Some(_remap::<A>),
                 },
@@ -426,7 +435,7 @@ unsafe fn get_allocator<'a, A: alloc::Allocator>(ptr: *mut c_void) -> Option<&'a
 pub(crate) mod testing {
     use std::{cell::Cell, ffi::c_void};
 
-    use super::Allocator;
+    use super::{Allocator, RESERVED_VTABLE_SLOTS};
     use crate::ffi;
 
     /// Turn a test allocator's state and vtable into an [`Allocator`].
@@ -486,11 +495,12 @@ pub(crate) mod testing {
         }
 
         pub(crate) fn allocator(&self) -> Allocator<'_> {
-            static VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
+            const VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
                 alloc: Some(capped_alloc),
                 resize: Some(no_resize),
                 remap: Some(no_remap),
                 free: Some(heap_free),
+                reserved: RESERVED_VTABLE_SLOTS,
             };
             allocator(self, &VTABLE)
         }
@@ -528,11 +538,12 @@ pub(crate) mod testing {
 
     impl Counting {
         pub(crate) fn allocator(&self) -> Allocator<'_> {
-            static VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
+            const VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
                 alloc: Some(counting_alloc),
                 resize: Some(no_resize),
                 remap: Some(no_remap),
                 free: Some(counting_free),
+                reserved: RESERVED_VTABLE_SLOTS,
             };
             allocator(self, &VTABLE)
         }
@@ -602,11 +613,12 @@ pub(crate) mod testing {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     impl Guard {
         pub(crate) fn allocator() -> Allocator<'static> {
-            static VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
+            const VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
                 alloc: Some(guard_pages::alloc),
                 resize: Some(no_resize),
                 remap: Some(no_remap),
                 free: Some(guard_pages::free),
+                reserved: RESERVED_VTABLE_SLOTS,
             };
             allocator(&(), &VTABLE)
         }

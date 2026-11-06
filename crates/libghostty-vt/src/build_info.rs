@@ -45,6 +45,42 @@ pub fn supports_tmux_control_mode() -> Result<bool> {
     build_info(Info::TMUX_CONTROL_MODE)
 }
 
+/// Whether the library was built with a feature. A build without one
+/// leaves out its functions, so the wrappers over them fail.
+///
+/// A library older than the feature queries answers
+/// [`Error::Unsupported`].
+pub fn supports(feature: Feature) -> Result<bool> {
+    build_info(feature.into())
+}
+
+/// A feature libghostty-vt can be built with or without. See [`supports`].
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, int_enum::IntEnum)]
+#[non_exhaustive]
+pub enum Feature {
+    /// [Snapshots](crate::snapshot): `ghostty_snapshot_*`.
+    Snapshot = Info::FEATURE_SNAPSHOT,
+    /// The [formatter](crate::fmt): `ghostty_formatter_*`.
+    Formatter = Info::FEATURE_FORMATTER,
+    /// [Selections](crate::selection), with selection gestures.
+    Selection = Info::FEATURE_SELECTION,
+    /// [Search](crate::search): `ghostty_search_*`.
+    Search = Info::FEATURE_SEARCH,
+    /// The [render state](crate::render): `ghostty_render_state_*`.
+    RenderState = Info::FEATURE_RENDER_STATE,
+    /// Key, mouse, focus and paste encoding.
+    InputEncode = Info::FEATURE_INPUT_ENCODE,
+    /// Color parsing and palettes: `ghostty_color_*`.
+    Color = Info::FEATURE_COLOR,
+    /// Grid references, cells and rows: `ghostty_grid_ref_*`,
+    /// `ghostty_tracked_grid_ref_*`, `ghostty_cell_get*`, `ghostty_row_get*`.
+    GridIntrospection = Info::FEATURE_GRID_INTROSPECTION,
+    /// Ghostty's glyph protocol, which lets applications register custom
+    /// glyphs. It has no functions of its own.
+    GlyphProtocol = Info::FEATURE_GLYPH_PROTOCOL,
+}
+
 /// The optimization mode the library was built with.
 pub fn optimize_mode() -> Result<OptimizeMode> {
     build_info::<ffi::OptimizeMode::Type>(Info::OPTIMIZE)

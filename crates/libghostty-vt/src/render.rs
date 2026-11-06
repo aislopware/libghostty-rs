@@ -4,11 +4,14 @@ use std::{convert::Into, marker::PhantomData, mem::MaybeUninit};
 
 use crate::{
     alloc::{Allocator, Object},
-    error::{Error, Result, from_optional_result, from_optional_result_uninit, from_result},
+    error::{
+        Error, Result, from_optional_result, from_optional_result_uninit, from_result,
+        from_result_with_len,
+    },
     ffi,
     screen::{Cell, Row},
     style::{RgbColor, Style},
-    terminal::Terminal,
+    terminal::{CursorStyle, Terminal},
 };
 
 pub use ffi::RenderStateRowSelection as RowSelection;
@@ -748,41 +751,6 @@ pub struct ImageIteration<'alloc, 's> {
     _phan: PhantomData<&'s Snapshot<'alloc, 's>>,
 }
 
-/// The dirty flag of every row a snapshot captured, read in place.
-///
-/// Returned by [`Snapshot::dirty_rows`]: one call for the whole frame, where
-/// [`RowIteration::dirty`] is a call per row. Index `i` is the row a
-/// [row iteration](RowIteration) visits `i`th, which is the position
-/// [`RowIteration::next_dirty`] reports for it (the viewport y without
-/// [overscan](RenderState#overscan)).
-///
-/// Nothing is copied: each read goes to the render state's own flags, so it
-/// sees every [`RowIteration::set_dirty`] and [`Snapshot::clean`] made after
-/// the view was taken. The view borrows the render state like the snapshot
-/// does, so no update can move the flags under it.
-///
-/// The flags name the changed rows only while the global
-/// [dirty state](Snapshot::dirty) is [`Dirty::Partial`]. A [`Dirty::Full`]
-/// frame redraws every row and a [`Dirty::Clean`] one none, whatever the flags
-/// say, as [`RowIteration::next_dirty`] does.
-///
-/// ```compile_fail,E0499
-/// use libghostty_vt::{RenderState, Terminal};
-/// let terminal = Terminal::new(8, 2).unwrap();
-/// let mut state = RenderState::new().unwrap();
-/// let dirty = state.update(&terminal).unwrap().dirty_rows().unwrap();
-/// state.update(&terminal).unwrap(); // The flags may move in an update.
-/// dirty.get(0);
-/// ```
-#[derive(Clone, Copy, Debug)]
-pub struct DirtyRows<'s> {
-    // A pointer, never a slice: libghostty writes the flags while the view
-    // lives (`set_dirty`, `clean`), which a `&[bool]` would forbid.
-    flags: *const bool,
-    len: usize,
-    _state: PhantomData<&'s ()>,
-}
-
 //--------------------------
 // Impl blocks
 //--------------------------
@@ -1005,11 +973,9 @@ impl Snapshot<'_, '_> {
     }
 
     /// Get the visual style of the cursor.
-    pub fn cursor_visual_style(&self) -> Result<CursorVisualStyle> {
-        self.get::<ffi::RenderStateCursorVisualStyle::Type>(
-            ffi::RenderStateData::CURSOR_VISUAL_STYLE,
-        )
-        .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+    pub fn cursor_visual_style(&self) -> Result<CursorStyle> {
+        self.get::<ffi::CursorStyle::Type>(ffi::RenderStateData::CURSOR_VISUAL_STYLE)
+            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
     }
 
     /// Get the relative position of the cursor and other information
@@ -1120,51 +1086,6 @@ impl Snapshot<'_, '_> {
             ffi::RenderStateOption::DIRTY,
             &(dirty as ffi::RenderStateDirty::Type),
         )
-    }
-}
-
-impl<'s> Snapshot<'_, 's> {
-    /// Every captured row's dirty flag, read in place. See [`DirtyRows`].
-    pub fn dirty_rows(&self) -> Result<DirtyRows<'s>> {
-        let view: ffi::RenderStateRowDirtyView = self.get(ffi::RenderStateData::ROW_DIRTY)?;
-        Ok(DirtyRows {
-            flags: view.ptr,
-            len: view.len,
-            _state: PhantomData,
-        })
-    }
-}
-
-impl DirtyRows<'_> {
-    /// How many rows the snapshot captured, overscan included.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// Whether the snapshot captured no row.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// The dirty flag of the row at iteration position `i`, or `None` past
-    /// the last row.
-    #[must_use]
-    pub fn get(&self, i: usize) -> Option<bool> {
-        // SAFETY: `i` is in bounds, and libghostty keeps the `len` flags
-        // valid while the render state is not updated, which the borrow
-        // `'s` rules out. A flag is a Zig `bool`, 0 or 1. The read makes no
-        // reference, so it cannot alias libghostty's writes, which only
-        // happen inside calls on this thread (the pointer makes the view
-        // neither `Send` nor `Sync`).
-        (i < self.len).then(|| unsafe { self.flags.add(i).read() })
-    }
-
-    /// The iteration positions of the rows whose flag is set, in order. Each
-    /// flag is read as the iterator reaches it.
-    pub fn positions(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.len).filter(|&i| self.get(i) == Some(true))
     }
 }
 
@@ -1500,7 +1421,7 @@ impl CellIteration<'_, '_> {
 
     /// The style for the current cell.
     pub fn style(&self) -> Result<Style> {
-        let mut value = ffi::sized!(ffi::Style);
+        let mut value = ffi::Style::default();
         let result = unsafe {
             ffi::ghostty_render_state_row_cells_get(
                 self.iter.0.as_raw(),
@@ -1564,35 +1485,35 @@ impl CellIteration<'_, '_> {
         self.get(ffi::RenderStateRowCellsData::GRAPHEMES_LEN)
     }
 
-    /// Write grapheme codepoints into a caller-provided buffer.
+    /// Write grapheme codepoints into a caller-provided buffer, returning how
+    /// many the cell has.
     ///
-    /// The buffer must be at least [`CellIteration::graphemes_len`] elements.
     /// The base codepoint is written first, followed by any extra codepoints.
+    /// A cell without text writes nothing and returns 0.
     ///
     /// If the buffer is too small, the function returns
     /// `Err(Error::OutOfSpace { required })` where `required` is the
-    /// required number of codepoints, and `buf` is left unchanged. The
-    /// caller can then retry with a sufficiently sized buffer.
-    pub fn graphemes_buf(&self, buf: &mut [char]) -> Result<()> {
-        // Upstream takes no buffer length and writes unchecked, so the size
-        // check has to happen here: without it a short buffer from safe code
-        // would be an out-of-bounds write.
-        let required = self.graphemes_len()? as usize;
-        if buf.len() < required {
-            return Err(Error::OutOfSpace { required });
-        }
-        // SAFETY: GRAPHEMES_BUF writes exactly `graphemes_len` elements for
-        // the current cell, and we just checked `buf` holds at least that
-        // many, so every write stays in bounds. Nothing between the length
-        // query and this call can move the iterator, since we hold `&self`.
+    /// cell's number of codepoints, and `buf` holds the first `buf.len()` of
+    /// them. The caller can then retry with a sufficiently sized buffer, e.g.
+    /// one of [`CellIteration::graphemes_len`] elements.
+    pub fn graphemes_buf(&self, buf: &mut [char]) -> Result<usize> {
+        let mut raw = ffi::CodepointBuffer {
+            ptr: buf.as_mut_ptr().cast(),
+            cap: buf.len(),
+            len: 0,
+        };
+        // SAFETY: libghostty writes at most `cap` codepoints, so every write
+        // stays within `buf`. `char` has the layout of `u32`, and the values
+        // are codepoints the terminal stored as text, which its UTF-8 decoder
+        // only produces as Unicode scalar values.
         let result = unsafe {
             ffi::ghostty_render_state_row_cells_get(
                 self.iter.0.as_raw(),
                 ffi::RenderStateRowCellsData::GRAPHEMES_BUF,
-                buf.as_mut_ptr().cast(),
+                (&raw mut raw).cast(),
             )
         };
-        from_result(result)
+        from_result_with_len(result, raw.len)
     }
 
     /// Replace the contents of `buf` with the current cell's full grapheme
@@ -1861,7 +1782,7 @@ impl ImageIteration<'_, '_> {
 
     /// The layer to draw the image in.
     pub fn layer(&self) -> Result<ImageLayer> {
-        self.get::<ffi::RenderStateImageLayer::Type>(ffi::RenderStateImageData::LAYER)
+        self.get::<ffi::ImageLayer::Type>(ffi::RenderStateImageData::LAYER)
             .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
     }
 
@@ -2018,7 +1939,7 @@ pub struct Cursor {
     /// Whether the cursor is at a password input field.
     pub password_input: bool,
     /// The visual style of the cursor.
-    pub visual_style: CursorVisualStyle,
+    pub visual_style: CursorStyle,
 }
 
 /// The [identity](RenderState#row-identity) of a row across render state
@@ -2055,21 +1976,6 @@ pub enum Dirty {
     Full = ffi::RenderStateDirty::FULL,
 }
 
-/// Visual style of the cursor.
-#[repr(i32)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, int_enum::IntEnum)]
-#[non_exhaustive]
-pub enum CursorVisualStyle {
-    /// Bar cursor (DECSCUSR 5, 6).
-    Bar = ffi::RenderStateCursorVisualStyle::BAR,
-    /// Block cursor (DECSCUSR 1, 2).
-    Block = ffi::RenderStateCursorVisualStyle::BLOCK,
-    /// Underline cursor (DECSCUSR 3, 4).
-    Underline = ffi::RenderStateCursorVisualStyle::UNDERLINE,
-    /// Hollow block cursor.
-    BlockHollow = ffi::RenderStateCursorVisualStyle::BLOCK_HOLLOW,
-}
-
 /// The image protocols that a terminal supports.
 ///
 /// The render state uses this to say which protocol each image placement came
@@ -2104,11 +2010,11 @@ pub enum ImageProtocol {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, int_enum::IntEnum)]
 pub enum ImageLayer {
     /// Below the cell background colors.
-    BelowBackground = ffi::RenderStateImageLayer::BELOW_BACKGROUND,
+    BelowBackground = ffi::ImageLayer::BELOW_BACKGROUND,
     /// Above the cell background colors and below the text.
-    BelowText = ffi::RenderStateImageLayer::BELOW_TEXT,
+    BelowText = ffi::ImageLayer::BELOW_TEXT,
     /// Above the text.
-    AboveText = ffi::RenderStateImageLayer::ABOVE_TEXT,
+    AboveText = ffi::ImageLayer::ABOVE_TEXT,
 }
 
 /// The kinds of Kitty graphics placements in a render state's image list.
@@ -2215,7 +2121,7 @@ mod tests {
         let cursor = snapshot.cursor().unwrap();
         assert_eq!(cursor, cursor_from_getters(&snapshot));
         assert!(!cursor.visible);
-        assert_eq!(cursor.visual_style, CursorVisualStyle::Bar);
+        assert_eq!(cursor.visual_style, CursorStyle::Bar);
         assert_eq!(
             cursor.viewport,
             Some(CursorViewport {
@@ -2288,75 +2194,6 @@ mod tests {
         let row = iteration.next().unwrap();
         let mut cell = cells.update(row).unwrap();
         assert!(cell.next().unwrap().style().unwrap().bold);
-    }
-
-    #[test]
-    fn dirty_rows_read_the_row_flags_in_place() {
-        let mut terminal = Terminal::new(8, 3).unwrap();
-        // Park the cursor on the row written below, as moving it dirties the
-        // row it leaves.
-        terminal.vt_write(b"\x1b[2;1H");
-        let mut state = RenderState::new().unwrap();
-        let mut rows = RowIterator::new().unwrap();
-
-        let snapshot = state.update(&terminal).unwrap();
-        let dirty = snapshot.dirty_rows().unwrap();
-        assert_eq!(dirty.len(), 3);
-        assert!(!dirty.is_empty());
-        assert_eq!(dirty.positions().collect::<Vec<_>>(), [0, 1, 2]);
-        assert_eq!(dirty.get(3), None);
-
-        // A flag written through a row shows in the view taken before it, and
-        // agrees with the row's own getter.
-        {
-            let mut iteration = rows.update(&snapshot).unwrap();
-            let mut i = 0;
-            while let Some(row) = iteration.next() {
-                if i != 1 {
-                    row.set_dirty(false).unwrap();
-                }
-                assert_eq!(dirty.get(i), Some(row.dirty().unwrap()));
-                i += 1;
-            }
-        }
-        assert_eq!(dirty.positions().collect::<Vec<_>>(), [1]);
-        snapshot.clean().unwrap();
-        assert_eq!(dirty.positions().count(), 0);
-
-        // The next update flags only the row that changed.
-        terminal.vt_write(b"x");
-        let snapshot = state.update(&terminal).unwrap();
-        assert_eq!(snapshot.dirty().unwrap(), Dirty::Partial);
-        let dirty = snapshot.dirty_rows().unwrap();
-        assert_eq!(dirty.positions().collect::<Vec<_>>(), [1]);
-        assert_eq!(dirty_rows(&mut rows, &snapshot), [1]);
-    }
-
-    #[test]
-    fn dirty_rows_count_overscan_rows_as_the_iteration_does() {
-        let mut terminal = Terminal::new(8, 3).unwrap();
-        for _ in 0..10 {
-            terminal.vt_write(b"x\r\n");
-        }
-        terminal.scroll_viewport(crate::terminal::ScrollViewport::Top);
-        let mut state = RenderState::new().unwrap();
-        state.set_overscan(Overscan { above: 1, below: 2 }).unwrap();
-        let mut rows = RowIterator::new().unwrap();
-
-        let snapshot = state.update(&terminal).unwrap();
-        // Nothing above the top: the view is the viewport and two rows below.
-        assert_eq!(sides(snapshot.overscan().unwrap()), (0, 2));
-        let dirty = snapshot.dirty_rows().unwrap();
-        assert_eq!(dirty.len(), 5);
-        let (viewport_ys, positions) = row_positions(&mut rows, &snapshot);
-        assert_eq!(viewport_ys.len(), dirty.len());
-        assert_eq!(
-            dirty.positions().collect::<Vec<_>>(),
-            positions
-                .iter()
-                .map(|&y| usize::from(y))
-                .collect::<Vec<_>>()
-        );
     }
 
     /// Collect the viewport y of every row an iteration visits, along with
@@ -2540,18 +2377,24 @@ mod tests {
         let mut cell_iteration = cells.update(iteration.next().unwrap()).unwrap();
         cell_iteration.next().unwrap();
 
-        // One slot short: rejected with the needed size, buffer untouched.
+        // One slot short: rejected with the needed size, holding what fit.
         let mut short = ['x'];
         assert!(matches!(
             cell_iteration.graphemes_buf(&mut short),
             Err(Error::OutOfSpace { required: 2 })
         ));
-        assert_eq!(short, ['x']);
+        assert_eq!(short, ['e']);
 
         // Exactly the needed size: filled with base then combining mark.
         let mut exact = ['x'; 2];
-        cell_iteration.graphemes_buf(&mut exact).unwrap();
+        assert_eq!(cell_iteration.graphemes_buf(&mut exact).unwrap(), 2);
         assert_eq!(exact, ['e', '\u{301}']);
+
+        // An empty buffer only reports the size.
+        assert!(matches!(
+            cell_iteration.graphemes_buf(&mut []),
+            Err(Error::OutOfSpace { required: 2 })
+        ));
     }
 
     /// Every value of one image placement, read through the public getters.

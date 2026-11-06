@@ -10,7 +10,7 @@ use crate::{
     },
     ffi::{self, TerminalData as Data, TerminalOption as Opt},
     key, mouse, osc,
-    screen::{CellSemanticContent, GridRef, Screen, TrackedGridRef},
+    screen::{GridRef, Screen, TrackedGridRef},
     style::{self, Palette, RawPalette, RgbColor},
 };
 
@@ -237,19 +237,20 @@ pub struct Terminal<'alloc: 'cb, 'cb> {
     pub(crate) id: u64,
 }
 
-/// Default visual style used when the cursor style is reset.
+/// Visual style of the cursor: the default that DECSCUSR reset (CSI 0 q)
+/// returns to, and the style the render state reports.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, int_enum::IntEnum)]
 #[non_exhaustive]
 pub enum CursorStyle {
     /// Bar cursor (DECSCUSR 5, 6).
-    Bar = ffi::TerminalCursorStyle::BAR,
+    Bar = ffi::CursorStyle::BAR,
     /// Block cursor (DECSCUSR 1, 2).
-    Block = ffi::TerminalCursorStyle::BLOCK,
+    Block = ffi::CursorStyle::BLOCK,
     /// Underline cursor (DECSCUSR 3, 4).
-    Underline = ffi::TerminalCursorStyle::UNDERLINE,
+    Underline = ffi::CursorStyle::UNDERLINE,
     /// Hollow block cursor.
-    BlockHollow = ffi::TerminalCursorStyle::BLOCK_HOLLOW,
+    BlockHollow = ffi::CursorStyle::BLOCK_HOLLOW,
 }
 
 impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
@@ -340,9 +341,6 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     ///
     /// [`Boundaries::GROUND`] is a state, not a byte: asking for it at ground
     /// stops at once, consuming nothing, so write what follows without it.
-    /// [`Boundaries::SCREEN_SWITCH`] stops before its byte, not after: a
-    /// program that keeps a copy of the primary screen reads it there, as
-    /// it was before the switch.
     ///
     /// Like [`Self::vt_write`], the input is assumed to be untrusted.
     ///
@@ -454,7 +452,11 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     /// Scrolls the terminal's viewport according to the given behavior.
     /// See [`ScrollViewport::DeltaPrompt`] for the navigation behavior.
     pub fn scroll_viewport(&mut self, scroll: ScrollViewport) {
-        unsafe { ffi::ghostty_terminal_scroll_viewport(self.inner.as_raw(), scroll.into()) }
+        // Fails only for a NULL terminal or an unknown tag, which the owned
+        // handle and the typed `scroll` rule out.
+        let result =
+            unsafe { ffi::ghostty_terminal_scroll_viewport(self.inner.as_raw(), scroll.into()) };
+        crate::error::debug_expect_success(result, "ghostty_terminal_scroll_viewport");
     }
 
     /// Resolve a point in the terminal grid to a grid reference.
@@ -474,7 +476,7 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     /// that. This API is instead meant for less strictly performance-sensitive
     /// use cases.
     pub fn grid_ref(&self, point: Point) -> Result<GridRef<'_>> {
-        let mut grid_ref = ffi::sized!(ffi::GridRef);
+        let mut grid_ref = ffi::GridRef::default();
         let result = unsafe {
             ffi::ghostty_terminal_grid_ref(self.inner.as_raw(), point.into(), &raw mut grid_ref)
         };
@@ -997,26 +999,6 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
         self.get::<ffi::MouseShape::Type>(Data::MOUSE_SHAPE)?
             .try_into()
             .map_err(|_| Error::InvalidValue)
-    }
-    /// Which part of its prompt the shell redraws after a resize, as the
-    /// last OSC 133;A with a `redraw` option said.
-    ///
-    /// Initially [`PromptRedraw::None`], and again after a full reset.
-    pub fn prompt_redraw(&self) -> Result<PromptRedraw> {
-        self.get::<ffi::TerminalPromptRedraw::Type>(Data::PROMPT_REDRAW)?
-            .try_into()
-            .map_err(|_| Error::InvalidValue)
-    }
-    /// The semantic content (OSC 133) the cursor writes cells with.
-    pub fn cursor_semantic_content(&self) -> Result<CellSemanticContent> {
-        self.get::<ffi::CellSemanticContent::Type>(Data::CURSOR_SEMANTIC_CONTENT)?
-            .try_into()
-            .map_err(|_| Error::InvalidValue)
-    }
-    /// Whether the cursor's input content ends at the end of the line
-    /// (`OSC 133;I`), so the next newline returns it to output.
-    pub fn cursor_semantic_clear_eol(&self) -> Result<bool> {
-        self.get(Data::CURSOR_SEMANTIC_CLEAR_EOL)
     }
     /// Get the current Kitty keyboard protocol flags.
     pub fn kitty_keyboard_flags(&self) -> Result<key::KittyKeyFlags> {
@@ -2056,9 +2038,8 @@ pub struct CompressionActivity(u64);
 /// within the clipboard write request callback. Returning without replying
 /// denies the write.
 ///
-/// As the C API requires, only the fields within the size libghostty reports
-/// for the request are read. Any that don't fit read as empty or false, and
-/// [`reply`](Self::reply) then does nothing, which denies the write.
+/// The request is a frozen struct (libghostty-vt's ABI freeze removed its
+/// `size` field), so every field is read directly.
 #[derive(Debug)]
 pub struct ClipboardWrite<'t> {
     ptr: *const ffi::ClipboardWrite,
@@ -2071,9 +2052,7 @@ impl<'t> ClipboardWrite<'t> {
     #[must_use]
     pub fn name(&self) -> &'t [u8] {
         // SAFETY: The request and its strings live for the callback duration.
-        unsafe {
-            crate::sized_field!(self.ptr, ffi::ClipboardWrite, name).map_or(&[], |n| n.to_bytes())
-        }
+        unsafe { (*self.ptr).name.to_bytes() }
     }
 
     /// True if the terminal already holds a session grant for this request.
@@ -2081,7 +2060,7 @@ impl<'t> ClipboardWrite<'t> {
     #[must_use]
     pub fn granted(&self) -> bool {
         // SAFETY: The request lives for the callback duration.
-        unsafe { crate::sized_field!(self.ptr, ffi::ClipboardWrite, granted) }.unwrap_or(false)
+        unsafe { (*self.ptr).granted }
     }
 
     /// True if the program supplied a session password, so the embedder may
@@ -2090,7 +2069,7 @@ impl<'t> ClipboardWrite<'t> {
     #[must_use]
     pub fn can_remember(&self) -> bool {
         // SAFETY: The request lives for the callback duration.
-        unsafe { crate::sized_field!(self.ptr, ffi::ClipboardWrite, can_remember) }.unwrap_or(false)
+        unsafe { (*self.ptr).can_remember }
     }
 
     /// Answer the write.
@@ -2110,9 +2089,7 @@ impl<'t> ClipboardWrite<'t> {
             ..ffi::sized!(ffi::ClipboardWriteReply)
         };
         // SAFETY: The request lives for the callback duration.
-        if let Some(callback) =
-            unsafe { crate::sized_field!(self.ptr, ffi::ClipboardWrite, reply) }.flatten()
-        {
+        if let Some(callback) = unsafe { (*self.ptr).reply } {
             // SAFETY: The reply only needs to outlive this synchronous call.
             unsafe { callback(self.ptr, &raw const reply) };
         }
@@ -2133,8 +2110,8 @@ impl<'t> ClipboardWrite<'t> {
     pub fn location(&self) -> ClipboardLocation {
         // SAFETY: We trust libghostty to give us a valid pointer
         // within the lifetime of the callback.
-        unsafe { crate::sized_field!(self.ptr, ffi::ClipboardWrite, location) }
-            .and_then(|location| location.try_into().ok())
+        unsafe { (*self.ptr).location }
+            .try_into()
             .unwrap_or(ClipboardLocation::Standard)
     }
     /// Get an iterator into a borrowed array of MIME representations.
@@ -2146,17 +2123,12 @@ impl<'t> ClipboardWrite<'t> {
     pub fn contents(&self) -> ClipboardContents<'t> {
         // SAFETY: We trust libghostty to give us a valid pointer
         // within the lifetime of the callback.
-        let (ptr, len) = unsafe {
-            (
-                crate::sized_field!(self.ptr, ffi::ClipboardWrite, contents),
-                crate::sized_field!(self.ptr, ffi::ClipboardWrite, contents_len),
-            )
-        };
+        let (ptr, len) = unsafe { ((*self.ptr).contents, (*self.ptr).contents_len) };
         // The C API declares `contents` optional and sends null for a write
         // carrying no representations (the "clear the clipboard" shape);
         // `from_raw_parts` requires a non-null pointer even at length zero.
         let contents: &'t [ffi::ClipboardContent] = match (ptr, len) {
-            (Some(ptr), Some(len)) if !ptr.is_null() => {
+            (ptr, len) if !ptr.is_null() => {
                 // SAFETY: We trust libghostty to give us a valid pointer and
                 // length within the lifetime of the callback.
                 unsafe { std::slice::from_raw_parts(ptr, len) }
@@ -2272,9 +2244,8 @@ pub enum ClipboardWriteError {
 /// before the callback returns. Returning without replying answers the
 /// program with an empty clipboard (OSC 52) or EPERM (OSC 5522).
 ///
-/// As the C API requires, only the fields within the size libghostty reports
-/// for the request are read. Any that don't fit read as empty or false, and
-/// [`reply`](Self::reply) then does nothing.
+/// The request is a frozen struct (libghostty-vt's ABI freeze removed its
+/// `size` field), so every field is read directly.
 #[derive(Debug)]
 pub struct ClipboardRead<'t> {
     ptr: *const ffi::ClipboardRead,
@@ -2300,8 +2271,8 @@ impl<'t> ClipboardRead<'t> {
     #[must_use]
     pub fn location(&self) -> ClipboardLocation {
         // SAFETY: The request lives for the callback duration.
-        unsafe { crate::sized_field!(self.ptr, ffi::ClipboardRead, location) }
-            .and_then(|location| location.try_into().ok())
+        unsafe { (*self.ptr).location }
+            .try_into()
             .unwrap_or(ClipboardLocation::Standard)
     }
 
@@ -2312,18 +2283,13 @@ impl<'t> ClipboardRead<'t> {
     /// raw bytes.
     pub fn mimes(&self) -> impl ExactSizeIterator<Item = &'t [u8]> + use<'t> {
         // SAFETY: The request lives for the callback duration.
-        let (ptr, len) = unsafe {
-            (
-                crate::sized_field!(self.ptr, ffi::ClipboardRead, mimes),
-                crate::sized_field!(self.ptr, ffi::ClipboardRead, mimes_len),
-            )
-        };
+        let (ptr, len) = unsafe { ((*self.ptr).mimes, (*self.ptr).mimes_len) };
         // `mimes` is NULL when `mimes_len` is zero (a targets-only OSC 5522
         // read), and `from_raw_parts` requires a non-null pointer even at
         // length zero. Check both, as `ClipboardWrite::contents` does, so
         // a NULL pointer can never reach it.
         let mimes: &'t [ffi::String] = match (ptr, len) {
-            (Some(ptr), Some(len)) if !ptr.is_null() && len > 0 => {
+            (ptr, len) if !ptr.is_null() && len > 0 => {
                 // SAFETY: libghostty provides `mimes_len` strings that live
                 // for the callback duration.
                 unsafe { std::slice::from_raw_parts(ptr, len) }
@@ -2340,7 +2306,7 @@ impl<'t> ClipboardRead<'t> {
     #[must_use]
     pub fn list(&self) -> bool {
         // SAFETY: The request lives for the callback duration.
-        unsafe { crate::sized_field!(self.ptr, ffi::ClipboardRead, list) }.unwrap_or(false)
+        unsafe { (*self.ptr).list }
     }
 
     /// Name of the requesting program for permission prompts, if the protocol
@@ -2348,9 +2314,7 @@ impl<'t> ClipboardRead<'t> {
     #[must_use]
     pub fn name(&self) -> &'t [u8] {
         // SAFETY: The request and its strings live for the callback duration.
-        unsafe {
-            crate::sized_field!(self.ptr, ffi::ClipboardRead, name).map_or(&[], |n| n.to_bytes())
-        }
+        unsafe { (*self.ptr).name.to_bytes() }
     }
 
     /// True if the terminal already holds a session grant for this request
@@ -2364,7 +2328,7 @@ impl<'t> ClipboardRead<'t> {
     #[must_use]
     pub fn granted(&self) -> bool {
         // SAFETY: The request lives for the callback duration.
-        unsafe { crate::sized_field!(self.ptr, ffi::ClipboardRead, granted) }.unwrap_or(false)
+        unsafe { (*self.ptr).granted }
     }
 
     /// True if the program supplied a session password, so the embedder may
@@ -2373,7 +2337,7 @@ impl<'t> ClipboardRead<'t> {
     #[must_use]
     pub fn can_remember(&self) -> bool {
         // SAFETY: The request lives for the callback duration.
-        unsafe { crate::sized_field!(self.ptr, ffi::ClipboardRead, can_remember) }.unwrap_or(false)
+        unsafe { (*self.ptr).can_remember }
     }
 
     /// Answer the read.
@@ -2423,9 +2387,7 @@ impl<'t> ClipboardRead<'t> {
             ..ffi::sized!(ffi::ClipboardReadReply)
         };
         // SAFETY: The request lives for the callback duration.
-        if let Some(callback) =
-            unsafe { crate::sized_field!(self.ptr, ffi::ClipboardRead, reply) }.flatten()
-        {
+        if let Some(callback) = unsafe { (*self.ptr).reply } {
             // SAFETY: The reply and the buffers it points to only need to
             // outlive this synchronous call.
             unsafe { callback(self.ptr, &raw const reply) };
@@ -2628,10 +2590,7 @@ impl<'t> DesktopNotification<'t> {
     pub fn title(self) -> &'t [u8] {
         // SAFETY: The notification and its strings live for the callback
         // duration.
-        unsafe {
-            crate::sized_field!(self.ptr, ffi::TerminalDesktopNotification, title)
-                .map_or(&[], |title| title.to_bytes())
-        }
+        unsafe { (*self.ptr).title.to_bytes() }
     }
 
     /// Notification body.
@@ -2641,10 +2600,7 @@ impl<'t> DesktopNotification<'t> {
     pub fn body(self) -> &'t [u8] {
         // SAFETY: The notification and its strings live for the callback
         // duration.
-        unsafe {
-            crate::sized_field!(self.ptr, ffi::TerminalDesktopNotification, body)
-                .map_or(&[], |body| body.to_bytes())
-        }
+        unsafe { (*self.ptr).body.to_bytes() }
     }
 }
 
@@ -2689,9 +2645,7 @@ bitflags::bitflags! {
     /// spellings count, the 7-bit one (ESC and a byte, such as `ESC ]`) and
     /// the 8-bit one (a byte from 0x80 to 0x9F, such as 0x9D). The string
     /// terminator ST is `ESC \` or 0x9C. [`GROUND`](Self::GROUND) is
-    /// different: the state between sequences, not a byte inside one. And
-    /// [`SCREEN_SWITCH`](Self::SCREEN_SWITCH) stops before its byte, not
-    /// after it.
+    /// different: the state between sequences, not a byte inside one.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct Boundaries: u32 {
         /// The stream is not inside an escape sequence or a partial UTF-8
@@ -2715,21 +2669,6 @@ bitflags::bitflags! {
         const OSC_START = ffi::TerminalBoundary::OSC_START as u32;
         /// The byte that ended an OSC string.
         const OSC_END = ffi::TerminalBoundary::OSC_END as u32;
-        /// The final byte of a mode set or reset (`CSI ? … h` or `l`) of
-        /// mode 47, 1047 or 1049, which switch between the primary and the
-        /// alternate screen. The stop lands right before the byte and
-        /// leaves it unconsumed: everything before the switch is processed,
-        /// a control inside the sequence too, and the switch is not, so the
-        /// screen the program switches away from reads as it left it.
-        /// [`WriteStop::screen`] says which mode and which way. The parse
-        /// finds the switch however the program wrote it: split across
-        /// writes, among other modes, with a control or an ignored byte
-        /// inside.
-        ///
-        /// The stop lands on the byte whether or not the screen would
-        /// change, and the next write would stop on it again: write it
-        /// without this boundary, then go on from the byte after it.
-        const SCREEN_SWITCH = ffi::TerminalBoundary::SCREEN_SWITCH as u32;
     }
 }
 
@@ -2814,21 +2753,6 @@ pub struct WriteStop {
     /// The byte that started or ended the string, such as `]`, 0x90, ESC or
     /// BEL, when a start or an end was reached.
     pub byte: Option<u8>,
-    /// The switch the byte left unconsumed would make, when
-    /// [`Boundaries::SCREEN_SWITCH`] was reached.
-    pub screen: Option<ScreenSwitch>,
-}
-
-/// A mode set or reset that switches between the primary and the alternate
-/// screen, which [`Terminal::vt_write_until`] stopped before.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ScreenSwitch {
-    /// The mode that switches: 47, 1047 or 1049, the first of them among
-    /// the sequence's parameters.
-    pub mode: u16,
-    /// A set (`h`), to the alternate screen, rather than a reset (`l`),
-    /// back to the primary.
-    pub set: bool,
 }
 
 impl WriteStop {
@@ -2843,12 +2767,6 @@ impl WriteStop {
             introducer: start.then(|| raw.introducer.try_into().ok()).flatten(),
             end: end.then(|| raw.end.try_into().ok()).flatten(),
             byte: (start || end).then_some(raw.byte),
-            screen: reached
-                .contains(Boundaries::SCREEN_SWITCH)
-                .then_some(ScreenSwitch {
-                    mode: raw.mode,
-                    set: raw.byte == b'h',
-                }),
         }
     }
 }
@@ -2868,21 +2786,6 @@ pub enum ProgressState {
     Indeterminate = ffi::TerminalProgressState::INDETERMINATE,
     /// Show paused progress.
     Pause = ffi::TerminalProgressState::PAUSE,
-}
-
-/// Which part of its prompt the shell redraws after a resize, and so which
-/// part the terminal clears before reflowing it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
-#[repr(i32)]
-#[non_exhaustive]
-pub enum PromptRedraw {
-    /// The shell redraws nothing, so nothing is cleared.
-    None = ffi::TerminalPromptRedraw::NONE,
-    /// The shell redraws its whole prompt (`redraw=1`).
-    Full = ffi::TerminalPromptRedraw::FULL,
-    /// The shell redraws only the last row of its prompt (`redraw=last`,
-    /// bash).
-    Last = ffi::TerminalPromptRedraw::LAST,
 }
 
 /// A program status report (OSC 7501).
@@ -2938,11 +2841,7 @@ impl<'t> ProgramStatus<'t> {
         }
     }
 
-    /// The raw report.
-    ///
-    /// Every field has been present since the struct was introduced, so
-    /// reading them doesn't need to consult `size` (unlike fields added
-    /// later, which go through `sized_field!`).
+    /// The raw report. The struct is frozen ABI, so every field is present.
     fn raw(self) -> &'t ffi::TerminalProgramStatus {
         // SAFETY: We trust libghostty to give us a valid underlying ptr,
         // which lives for the callback duration, i.e. `'t`.
@@ -3097,12 +2996,7 @@ impl<'t> SemanticPrompt<'t> {
         }
     }
 
-    /// The raw event.
-    ///
-    /// Upstream promises every field we read has been present since the
-    /// struct was introduced, so reading them doesn't need to consult
-    /// `size`. Fields added later (upstream names a command identifier and
-    /// a "redrawn prompt" flag as likely) must go through `sized_field!`.
+    /// The raw event. The struct is frozen ABI, so every field is present.
     fn raw(self) -> &'t ffi::TerminalSemanticPrompt {
         // SAFETY: We trust libghostty to give us a valid underlying ptr,
         // which lives for the callback duration, i.e. `'t`.
@@ -4141,22 +4035,6 @@ handlers! {
         }
     }
 
-    /// Call the given function when the running program changes Kitty drag
-    /// and drop protocol (OSC 72) state in a way the embedder may need to
-    /// act on. Installing it enables the protocol; without it OSC 72 is
-    /// ignored entirely. See [`crate::kitty::dnd`] for the flow. Events this
-    /// version of the bindings does not know are not passed on.
-    pub fn on_kitty_dnd(
-        &mut self,
-        tag = KITTY_DND,
-        from = TerminalKittyDndFn(event: ffi::KittyDndEvent::Type),
-        to = KittyDndFn(crate::kitty::dnd::Event),
-    ) |term, func| {
-        if let Some(event) = crate::kitty::dnd::Event::from_raw(event) {
-            func(term, event);
-        }
-    }
-
     /// Called once for each complete sequence that libghostty-vt does not
     /// implement. Match on [`UnknownSequence`] first, because more kinds of
     /// sequences may be reported in later versions.
@@ -4249,7 +4127,6 @@ handlers! {
 mod tests {
     use super::*;
     use crate::RenderState;
-    use crate::render::CursorVisualStyle;
     use std::cell::{Cell, RefCell};
     use std::mem::ManuallyDrop;
 
@@ -4567,63 +4444,6 @@ mod tests {
         assert_eq!(end.kind, Some(StringKind::Osc));
         assert_eq!((end.end, end.byte), (Some(StringEnd::Bel), Some(0x07)));
         assert_eq!(terminal.title().unwrap(), b"t");
-    }
-
-    #[test]
-    fn vt_write_until_stops_before_a_screen_switch() {
-        let switch = Boundaries::SCREEN_SWITCH;
-        let mut terminal = Terminal::new(8, 3).expect("terminal should initialize");
-        // A line feed inside the sequence runs before the switch, and the
-        // ignored 0xA3 leaves mode 1049.
-        let data = b"ab\x1b[?10\n4\xa39hcd";
-        let stop = terminal.vt_write_until(data, switch).unwrap().unwrap();
-        assert_eq!((stop.consumed, stop.reached), (data.len() - 3, switch));
-        assert_eq!(
-            stop.screen,
-            Some(ScreenSwitch {
-                mode: 1049,
-                set: true
-            })
-        );
-        assert_eq!((stop.kind, stop.byte), (None, None));
-        assert_eq!(
-            terminal.active_screen().unwrap(),
-            crate::screen::Screen::Primary
-        );
-        assert_eq!(terminal.cursor_y().unwrap(), 1);
-
-        // The next write would stop on the same byte: it goes without.
-        let rest = &data[stop.consumed..];
-        let again = terminal.vt_write_until(rest, switch).unwrap().unwrap();
-        assert_eq!(again.consumed, 0);
-        terminal.vt_write(&rest[..1]);
-        assert_eq!(
-            terminal.active_screen().unwrap(),
-            crate::screen::Screen::Alternate
-        );
-
-        // Back, and a set a colon drops does not stop.
-        let back = terminal
-            .vt_write_until(b"\x1b[?47l\x1b[?1049:1h", switch)
-            .unwrap()
-            .unwrap();
-        assert_eq!(back.consumed, 5);
-        assert_eq!(
-            back.screen,
-            Some(ScreenSwitch {
-                mode: 47,
-                set: false
-            })
-        );
-        terminal.vt_write(b"l");
-        assert_eq!(
-            terminal.active_screen().unwrap(),
-            crate::screen::Screen::Primary
-        );
-        assert_eq!(
-            terminal.vt_write_until(b"\x1b[?1049:1h", switch).unwrap(),
-            None
-        );
     }
 
     #[test]
@@ -5297,7 +5117,7 @@ mod tests {
             snapshot
                 .cursor_visual_style()
                 .expect("cursor style should be readable"),
-            CursorVisualStyle::Underline
+            CursorStyle::Underline
         );
         assert!(
             snapshot
@@ -5388,44 +5208,6 @@ mod tests {
         assert_eq!(terminal.cursor_x().unwrap(), 2);
         drop(terminal);
         assert_eq!(seen.into_inner(), [0], "reset before `xy` was printed");
-    }
-
-    #[test]
-    fn the_cursor_semantic_content_follows_the_shell() {
-        let mut terminal = Terminal::new(80, 24).unwrap();
-        assert_eq!(
-            terminal.cursor_semantic_content().unwrap(),
-            CellSemanticContent::Output
-        );
-        terminal.vt_write(b"\x1b]133;A\x07$ ");
-        assert_eq!(
-            terminal.cursor_semantic_content().unwrap(),
-            CellSemanticContent::Prompt
-        );
-        terminal.vt_write(b"\x1b]133;I\x07ls");
-        assert_eq!(
-            terminal.cursor_semantic_content().unwrap(),
-            CellSemanticContent::Input
-        );
-        assert!(terminal.cursor_semantic_clear_eol().unwrap());
-        terminal.vt_write(b"\r\n");
-        assert_eq!(
-            terminal.cursor_semantic_content().unwrap(),
-            CellSemanticContent::Output
-        );
-        assert!(!terminal.cursor_semantic_clear_eol().unwrap());
-    }
-
-    #[test]
-    fn prompt_redraw_follows_the_shell_and_a_full_reset() {
-        let mut terminal = Terminal::new(80, 24).unwrap();
-        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::None);
-        terminal.vt_write(b"\x1b]133;A;redraw=1\x07");
-        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::Full);
-        terminal.vt_write(b"\x1b]133;A;redraw=last\x07");
-        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::Last);
-        terminal.vt_write(b"\x1bc");
-        assert_eq!(terminal.prompt_redraw().unwrap(), PromptRedraw::None);
     }
 
     #[test]
@@ -6141,79 +5923,6 @@ mod tests {
         );
     }
 
-    /// The C API only allows reading the fields within a request's `size`.
-    /// For a request that ends before `name`, the fields past it must not be
-    /// read, and `reply` must not call whatever lies where the reply function
-    /// would be.
-    #[test]
-    fn clipboard_write_reads_only_fields_within_its_size() {
-        unsafe extern "C" fn reply(
-            _: *const ffi::ClipboardWrite,
-            _: *const ffi::ClipboardWriteReply,
-        ) {
-            panic!("a reply function past the request's size was called");
-        }
-        let data = b"hi";
-        let content = ffi::ClipboardContent {
-            mime: ffi::String::from("text/plain"),
-            data: ffi::String {
-                ptr: data.as_ptr(),
-                len: data.len(),
-            },
-        };
-        let raw = ffi::ClipboardWrite {
-            size: std::mem::offset_of!(ffi::ClipboardWrite, name),
-            location: ffi::ClipboardLocation::PRIMARY,
-            contents: &raw const content,
-            contents_len: 1,
-            name: ffi::String::from("program"),
-            granted: true,
-            can_remember: true,
-            reply: Some(reply),
-            ..ffi::sized!(ffi::ClipboardWrite)
-        };
-        // SAFETY: `raw` outlives the borrow, matching the callback contract.
-        let write = unsafe { ClipboardWrite::from_raw(&raw const raw) };
-        assert_eq!(write.location(), ClipboardLocation::Primary);
-        assert_eq!(write.contents().next().unwrap().data, b"hi");
-        assert_eq!(write.name(), b"");
-        assert!(!write.granted());
-        assert!(!write.can_remember());
-        write.reply(Ok(()), false);
-    }
-
-    /// Same as above for a read request that ends before `name`.
-    #[test]
-    fn clipboard_read_reads_only_fields_within_its_size() {
-        unsafe extern "C" fn reply(
-            _: *const ffi::ClipboardRead,
-            _: *const ffi::ClipboardReadReply,
-        ) {
-            panic!("a reply function past the request's size was called");
-        }
-        let mime = ffi::String::from("text/plain");
-        let raw = ffi::ClipboardRead {
-            size: std::mem::offset_of!(ffi::ClipboardRead, name),
-            location: ffi::ClipboardLocation::SELECTION,
-            mimes: &raw const mime,
-            mimes_len: 1,
-            list: true,
-            name: ffi::String::from("program"),
-            granted: true,
-            can_remember: true,
-            reply: Some(reply),
-            ..ffi::sized!(ffi::ClipboardRead)
-        };
-        // SAFETY: `raw` outlives the borrow, matching the callback contract.
-        let read = unsafe { ClipboardRead::from_raw(&raw const raw) };
-        assert_eq!(read.location(), ClipboardLocation::Selection);
-        assert_eq!(read.mimes().collect::<Vec<_>>(), [b"text/plain"]);
-        assert_eq!(read.name(), b"");
-        assert!(!read.granted());
-        assert!(!read.can_remember());
-        read.reply(Ok(&[]), &[], false);
-    }
-
     /// Bold `A`, then `B`, a space and `C` on the first row.
     ///
     /// Expected checksums, worked out from upstream's `xt_checksum.compute`:
@@ -6591,10 +6300,10 @@ mod miri_soundness {
             let request = ffi::ClipboardRead {
                 ctx: terminal.cast(),
                 reply: Some(reply_to_read),
-                ..ffi::sized!(ffi::ClipboardRead)
+                ..Default::default()
             };
             // SAFETY: Registration provided this callback and its userdata;
-            // the sized request remains live throughout synchronous dispatch.
+            // the request remains live throughout synchronous dispatch.
             unsafe { read.unwrap()(terminal, userdata, &raw const request) };
         } else {
             // SAFETY: Registration provided this callback and its userdata.
@@ -6750,7 +6459,7 @@ mod miri_soundness {
             location: ffi::ClipboardLocation::STANDARD,
             contents: std::ptr::null(),
             contents_len: 0,
-            ..ffi::sized!(ffi::ClipboardWrite)
+            ..Default::default()
         };
         // SAFETY: `raw` outlives the borrow, matching the callback contract.
         let write = unsafe { ClipboardWrite::from_raw(&raw) };

@@ -250,7 +250,9 @@ impl<'p> Command<'p, '_> {
         let result =
             unsafe { ffi::ghostty_osc_command_data(self.inner, tag, value.as_mut_ptr().cast()) };
 
-        if result {
+        // Anything but success (NO_VALUE for data this command lacks,
+        // INVALID_VALUE for a tag it does not have) means there is no value.
+        if result == ffi::Result::SUCCESS {
             // SAFETY: Value should be initialized after successful call.
             Some(unsafe { value.assume_init() })
         } else {

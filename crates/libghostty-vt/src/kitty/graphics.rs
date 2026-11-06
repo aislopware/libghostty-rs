@@ -265,8 +265,8 @@
 //!   1. Create an iterator with [`PlacementIterator::new`].
 //!   2. Fill it from the storage with [`PlacementIterator::update`], which
 //!      returns a [`PlacementIteration`].
-//!   3. Optionally limit it to one layer with
-//!      [`PlacementIteration::set_layer`].
+//!   3. Optionally limit it to some layers with
+//!      [`PlacementIteration::set_layers`].
 //!   4. Move to each placement with [`PlacementIteration::next`] and read its
 //!      values with the methods on [`PlacementIteration`], such as
 //!      [`PlacementIteration::image_id`].
@@ -573,8 +573,9 @@ use std::{
 use crate::{
     Terminal,
     alloc::{Allocator, Bytes, Object, Ref},
-    error::{Error, Result, from_optional_result_uninit, from_result},
+    error::{Error, Result, from_optional_result, from_optional_result_uninit, from_result},
     ffi,
+    render::ImageLayer,
     selection::Selection,
 };
 
@@ -992,15 +993,32 @@ impl<'t> Image<'t> {
     /// [generation](Image::generation) changes whenever the current frame
     /// changes, so generation-keyed caches remain coherent.
     pub fn data(&self) -> Result<Option<&'t [u8]>> {
-        let ptr = self.get::<*const u8>(ffi::KittyGraphicsImageData::DATA_PTR)?;
-        if ptr.is_null() {
-            return Ok(None);
-        }
+        let mut pixels = ffi::String {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
+        // SAFETY: The image is live and PIXELS writes a `GhosttyString`.
+        let result = unsafe {
+            ffi::ghostty_kitty_graphics_image_get(
+                self.inner.as_raw(),
+                ffi::KittyGraphicsImageData::PIXELS,
+                (&raw mut pixels).cast(),
+            )
+        };
+        // NO_VALUE: the pixels have not arrived yet.
+        // SAFETY: The pixels live in terminal memory until the terminal is
+        // next modified, which the `'t` borrow rules out.
+        Ok(from_optional_result(result, pixels)?.map(|pixels| unsafe { pixels.to_bytes() }))
+    }
 
-        let len = self.get::<usize>(ffi::KittyGraphicsImageData::DATA_LEN)?;
-
-        // SAFETY: We trust libghostty to return valid results
-        Ok(Some(unsafe { std::slice::from_raw_parts(ptr, len) }))
+    /// The size of the image's pixel data in bytes: width × height × bytes
+    /// per pixel for the reported [format](Image::format).
+    ///
+    /// Known before the pixels arrive, while [`Image::data`] is still
+    /// `None`; the image already counts this much against the storage limit
+    /// then. Once they arrive, it equals the length of [`Image::data`].
+    pub fn expected_len(&self) -> Result<usize> {
+        self.get(ffi::KittyGraphicsImageData::EXPECTED_LEN)
     }
 }
 
@@ -1070,8 +1088,8 @@ impl Drop for PlacementIterator<'_> {
 impl<'t> PlacementIteration<'t, '_> {
     /// Advance the placement iterator to the next placement.
     ///
-    /// If a layer filter has been set via [`PlacementIteration::set_layer`],
-    /// only placements matching that layer are returned.
+    /// If a layer filter has been set via [`PlacementIteration::set_layers`],
+    /// only placements in those layers are returned.
     #[expect(
         clippy::should_implement_trait,
         reason = "a lending iterator: each placement borrows the iteration"
@@ -1113,11 +1131,12 @@ impl<'t> PlacementIteration<'t, '_> {
         Ok(unsafe { value.assume_init() })
     }
 
-    /// Only return placements in one layer. See [`Layer`].
-    pub fn set_layer(&self, layer: Layer) -> Result<()> {
-        self.set::<ffi::KittyPlacementLayer::Type>(
+    /// Only return placements in the given layers. See [`Layers`]. The
+    /// empty set turns the filter off, which is the default.
+    pub fn set_layers(&self, layers: Layers) -> Result<()> {
+        self.set::<u32>(
             ffi::KittyGraphicsPlacementIteratorOption::LAYER,
-            &layer.into(),
+            &layers.bits(),
         )
     }
 
@@ -1383,28 +1402,37 @@ pub struct SourceRect {
     pub height: u32,
 }
 
-/// A layer to limit the storage placement iterator to, set with
-/// [`PlacementIteration::set_layer`].
-///
-/// The Kitty graphics protocol picks a placement's layer from its z-index, as
-/// each value below describes. This filter is only for the storage iterator.
-/// To draw, use the layer the render state gives each entry
-/// ([`ImageIteration::layer`](crate::render::ImageIteration::layer)). It
-/// follows the same rules, and it also covers virtual placements, which are
-/// always drawn below the text.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, int_enum::IntEnum)]
-#[repr(i32)]
-pub enum Layer {
-    /// Every placement. This is the default.
-    #[default]
-    All = ffi::KittyPlacementLayer::ALL,
-    /// Placements drawn below the cell backgrounds: z < [`i32::MIN`] / 2.
-    BelowBg = ffi::KittyPlacementLayer::BELOW_BG,
-    /// Placements drawn above the cell backgrounds and below the text:
-    /// [`i32::MIN`] / 2 ≤ z < 0.
-    BelowText = ffi::KittyPlacementLayer::BELOW_TEXT,
-    /// Placements drawn above the text: z ≥ 0.
-    AboveText = ffi::KittyPlacementLayer::ABOVE_TEXT,
+bitflags::bitflags! {
+    /// The layers to limit the storage placement iterator to, set with
+    /// [`PlacementIteration::set_layers`]. The empty set visits every
+    /// placement, which is the default.
+    ///
+    /// The Kitty graphics protocol picks a placement's layer from its z-index,
+    /// as [`ImageLayer`] describes. This filter is only for the storage
+    /// iterator. To draw, use the layer the render state gives each entry
+    /// ([`ImageIteration::layer`](crate::render::ImageIteration::layer)). It
+    /// follows the same rules, and it also covers virtual placements, which
+    /// are always drawn below the text.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    pub struct Layers: u32 {
+        /// Placements drawn below the cell backgrounds: z < [`i32::MIN`] / 2.
+        const BELOW_BACKGROUND = 1 << ffi::ImageLayer::BELOW_BACKGROUND;
+        /// Placements drawn above the cell backgrounds and below the text:
+        /// [`i32::MIN`] / 2 ≤ z < 0.
+        const BELOW_TEXT = 1 << ffi::ImageLayer::BELOW_TEXT;
+        /// Placements drawn above the text: z ≥ 0.
+        const ABOVE_TEXT = 1 << ffi::ImageLayer::ABOVE_TEXT;
+    }
+}
+
+impl From<ImageLayer> for Layers {
+    fn from(layer: ImageLayer) -> Self {
+        match layer {
+            ImageLayer::BelowBackground => Self::BELOW_BACKGROUND,
+            ImageLayer::BelowText => Self::BELOW_TEXT,
+            ImageLayer::AboveText => Self::ABOVE_TEXT,
+        }
+    }
 }
 
 /// Pixel format of a Kitty graphics image.
