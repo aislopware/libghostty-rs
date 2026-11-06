@@ -64,6 +64,17 @@ fn main() {
         // These headers only need freestanding C headers. Use Clang's builtins
         // instead of the host libc headers when parsing a different ABI.
         .clang_arg("-ffreestanding")
+        // Clang 21 predefines __musl__ for musl targets, and its stddef.h
+        // then defers to the system's even when freestanding. No musl headers
+        // exist on the generator host, and the types are the same, so take the
+        // builtin path.
+        .clang_arg("-U__musl__")
+        // GHOSTTY_ENUM_TYPED gives every enum `: int` only in C23 or C++11 (the
+        // clang `c_fixed_enum` branch is gone upstream). Under clang's default
+        // gnu17 an enum with no negative values is `unsigned int`, which would
+        // turn most `Type` aliases from c_int into c_uint. Parse as C23 so the
+        // enums keep the C ABI type libghostty-vt declares (`enum(c_int)`).
+        .clang_arg("-std=c23")
         // Wasm only adds utility functions; the C types are shared.
         .clang_arg("-D__wasm__")
         .allowlist_function("[Gg]hostty.*")
@@ -147,8 +158,10 @@ fn main() {
     };
     // Every target with checks, so the crate can refuse a target that gets none: its build's
     // cfg matching no module would otherwise compile without a single layout check.
-    let every: Vec<syn::Meta> =
-        layouts.iter().flat_map(|(_, targets)| targets.iter().cloned()).collect();
+    let every: Vec<syn::Meta> = layouts
+        .iter()
+        .flat_map(|(_, targets)| targets.iter().cloned())
+        .collect();
     for (index, (layout, targets)) in layouts.into_iter().enumerate() {
         let name = quote::format_ident!("layout_{index}");
         let items = syn::parse_file(&layout).unwrap().items;
@@ -244,7 +257,7 @@ const PREFIXES: &[(&str, &str)] = &[
     ("GhosttyTerminalOption", "GHOSTTY_TERMINAL_OPT"),
     (
         "GhosttyTerminalScrollViewportTag",
-        "GHOSTTY_SCROLL_VIEWPORT",
+        "GHOSTTY_TERMINAL_SCROLL_VIEWPORT",
     ),
     ("GhosttyStyleColorTag", "GHOSTTY_STYLE_COLOR"),
     ("GhosttyRowSemanticPrompt", "GHOSTTY_ROW_SEMANTIC"),
@@ -254,7 +267,16 @@ const PREFIXES: &[(&str, &str)] = &[
     ("GhosttyModeReportState", "GHOSTTY_MODE_REPORT"),
     ("GhosttyFocusEvent", "GHOSTTY_FOCUS"),
     ("GhosttyResult", "GHOSTTY_"),
-    ("GhosttyKittyGraphicsImageData", "GHOSTTY_KITTY_IMAGE_DATA"),
+    (
+        "GhosttyKittyGraphicsPlacementIteratorOption",
+        "GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPT",
+    ),
+    ("GhosttyFormatterOption", "GHOSTTY_FORMATTER_OPT"),
+    ("GhosttyRenderStateOption", "GHOSTTY_RENDER_STATE_OPT"),
+    (
+        "GhosttyRenderStateRowOption",
+        "GHOSTTY_RENDER_STATE_ROW_OPT",
+    ),
     (
         "GhosttySelectionGestureEventOption",
         "GHOSTTY_SELECTION_GESTURE_EVENT_OPT",
