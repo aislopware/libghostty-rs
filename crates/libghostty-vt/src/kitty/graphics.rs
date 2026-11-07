@@ -982,6 +982,13 @@ impl<'t> Image<'t> {
     /// Returns `None` when the image metadata is resident but its pixel
     /// payload is pending.
     ///
+    /// Pending pixels only arrive while their source is still delivering
+    /// them. For example, the images of a snapshot get their pixels from
+    /// [`IncrementalDecoder::next`](crate::snapshot::IncrementalDecoder::next).
+    /// If decoding stops early or fails, or the snapshot was taken while the
+    /// image was still pending, the image can stay pending and this keeps
+    /// returning `None`.
+    ///
     /// The data is always fully decoded, uncompressed pixels in the format
     /// reported by [`Image::format`]: zlib payloads are inflated and PNG
     /// payloads are decoded to RGBA at transmission time, before the image
