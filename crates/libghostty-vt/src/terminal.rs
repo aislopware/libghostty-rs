@@ -6814,6 +6814,21 @@ mod miri_soundness {
         unknown: ffi::TerminalUnknownSequenceFn,
     }
 
+    // Every way to make a terminal first points libghostty's PNG hook at
+    // this crate's decoder (`kitty::graphics::hook_png_decoder`). These tests
+    // never load an image, so the shim only accepts that one write.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn ghostty_sys_set(
+        option: ffi::SysOption::Type,
+        _: *const std::ffi::c_void,
+    ) -> ffi::Result::Type {
+        if option == ffi::SysOption::DECODE_PNG {
+            ffi::Result::SUCCESS
+        } else {
+            ffi::Result::INVALID_VALUE
+        }
+    }
+
     #[unsafe(no_mangle)]
     unsafe extern "C" fn ghostty_terminal_new(
         _: *const ffi::Allocator,
