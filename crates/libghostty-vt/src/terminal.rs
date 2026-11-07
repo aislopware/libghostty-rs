@@ -1087,9 +1087,11 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     ///
     /// Lowering the limit immediately removes eligible complete historical
     /// pages. A value of zero disables scrollback and erases retained history.
-    /// A `None` value removes the byte limit.
+    /// A `None` value removes the byte limit, as [`Terminal::scrollback_max_bytes`]
+    /// then reports. (The C API's `NULL` restores libghostty's 10,000-byte
+    /// default instead, which sits below one page; `None` passes `SIZE_MAX`.)
     pub fn set_scrollback_max_bytes(&mut self, v: Option<usize>) -> Result<&mut Self> {
-        self.set_optional(Opt::SCROLLBACK_MAX_BYTES, v.as_ref())?;
+        self.set_optional(Opt::SCROLLBACK_MAX_BYTES, Some(&v.unwrap_or(usize::MAX)))?;
         Ok(self)
     }
 
@@ -1120,9 +1122,11 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     /// a narrower terminal viewport). So, they are useful together.
     ///
     /// Lowering the limit immediately removes eligible complete historical
-    /// pages. A `None` value pointer removes the line limit.
+    /// pages. A `None` value removes the line limit, as
+    /// [`Terminal::scrollback_max_lines`] then reports (`SIZE_MAX` to the C API,
+    /// whose `NULL` restores its default).
     pub fn set_scrollback_max_lines(&mut self, v: Option<usize>) -> Result<&mut Self> {
-        self.set_optional(Opt::SCROLLBACK_MAX_LINES, v.as_ref())?;
+        self.set_optional(Opt::SCROLLBACK_MAX_LINES, Some(&v.unwrap_or(usize::MAX)))?;
         Ok(self)
     }
 
@@ -5304,6 +5308,19 @@ mod tests {
             )
             .as_bytes()
         );
+    }
+
+    #[test]
+    fn none_removes_a_scrollback_limit_and_reads_back_as_none() {
+        let mut t = Terminal::new(10, 4).unwrap();
+        t.set_scrollback_max_bytes(Some(4096)).unwrap();
+        t.set_scrollback_max_lines(Some(100)).unwrap();
+        assert_eq!(t.scrollback_max_bytes().unwrap(), Some(4096));
+        assert_eq!(t.scrollback_max_lines().unwrap(), Some(100));
+        t.set_scrollback_max_bytes(None).unwrap();
+        t.set_scrollback_max_lines(None).unwrap();
+        assert_eq!(t.scrollback_max_bytes().unwrap(), None);
+        assert_eq!(t.scrollback_max_lines().unwrap(), None);
     }
 
     #[test]
