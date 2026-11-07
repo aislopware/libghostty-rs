@@ -78,8 +78,9 @@ The other ways in, in the order the build script tries them:
   `zig build --system` for network-free builds.
 - `LIBGHOSTTY_VT_SYS_LIB_DIR`: link a directory holding `lib/` and `include/`.
 - The opt-in `libghostty-vt-sys/pkg-config` feature: an installed
-  `libghostty-vt`. libghostty-vt is pre-1.0, so the checked-in bindings move
-  with the pinned commit and do not promise compatibility with other revisions.
+  `libghostty-vt`. The bindings are generated from the libghostty-vt 1.0.0
+  headers, whose C ABI holds for every 1.x release, so any 1.x library links;
+  only the pinned commit carries the fork's terminal fixes.
 
 Nix builds in this repository prefetch the pinned Ghostty source and Ghostty's
 Zig package dependencies up front, then set `GHOSTTY_SOURCE_DIR` and

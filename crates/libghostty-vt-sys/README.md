@@ -53,8 +53,9 @@ Raw FFI bindings for libghostty-vt.
   nor `LIBGHOSTTY_VT_SYS_LIB_DIR` is set, before the prebuilt library. With the
   default static link mode, it probes Ghostty's `libghostty-vt-static`
   pkg-config module instead.
-- libghostty-vt is pre-1.0, so these bindings do not guarantee compatibility
-  with arbitrary installed C API revisions.
+- The bindings are generated from the libghostty-vt 1.0.0 headers, whose C
+  ABI holds for every 1.x release, so an installed 1.x library links; only the
+  pinned commit carries the fork's terminal fixes.
 
 ## Moving the pin
 

@@ -112,8 +112,9 @@
            pixels on its next frame."
 )]
 //!
-//! Snapshot format version 1 is a work in progress and does not yet carry a
-//! binary-compatibility guarantee.
+//! The snapshot byte format is versioned separately from libghostty-vt and is
+//! not covered by its ABI promise: the bytes the functions write and accept
+//! may change in any release.
 //!
 //! ## See also
 //!

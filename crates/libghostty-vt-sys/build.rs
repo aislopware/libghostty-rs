@@ -163,8 +163,8 @@ fn main() {
     }
 
     // When the pkg-config feature is enabled, prefer an installed library over
-    // the prebuilt one. libghostty is pre-1.0, so this crate intentionally does
-    // not promise compatibility with every installed C API revision.
+    // the prebuilt one. The bindings follow the libghostty-vt 1.0 C ABI, which
+    // every 1.x release keeps.
     #[cfg(feature = "pkg-config")]
     if try_pkg_config(link_mode) {
         return;
