@@ -4863,6 +4863,120 @@ mod tests {
         assert_eq!(terminal.cursor_x().unwrap(), 0);
     }
 
+    /// Mirrors the header's DCS example: the start stop lands on `P`, so the
+    /// `1;2|` header follows it, and the payload runs up to the ESC of ST.
+    #[test]
+    fn vt_write_until_finds_esc_dcs() {
+        let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
+        let input = b"\x1bP1;2|data\x1b\\";
+        let want = Boundary::DCS_START | Boundary::DCS_END;
+
+        let start = terminal.vt_write_until(input, want).unwrap();
+        assert_eq!(
+            start,
+            Some(WriteStop {
+                consumed: 2,
+                reached: Boundary::DCS_START,
+                kind: Some(StringKind::Dcs),
+                introducer: Some(StringIntroducer::Esc),
+                end: None,
+                byte: Some(b'P'),
+            })
+        );
+
+        // The header and payload, then the ESC of `ESC \`.
+        let end = terminal.vt_write_until(&input[2..], want).unwrap();
+        assert_eq!(
+            end,
+            Some(WriteStop {
+                consumed: b"1;2|data".len() + 1,
+                reached: Boundary::DCS_END,
+                kind: Some(StringKind::Dcs),
+                introducer: None,
+                end: Some(StringEnd::StEsc),
+                byte: Some(0x1b),
+            })
+        );
+    }
+
+    #[test]
+    fn vt_write_until_osc_bel_end_reaches_ground() {
+        // Mirrors the BEL half of upstream's "vt_write_until osc start and
+        // bel end" test.
+        let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
+        terminal.vt_write(b"\x1b]");
+
+        // BEL ends the string and reaches ground on the same byte, so both
+        // requested flags are set.
+        let stop = terminal
+            .vt_write_until(b"2;title\x07x", Boundary::OSC_END | Boundary::GROUND)
+            .unwrap();
+        assert_eq!(
+            stop,
+            Some(WriteStop {
+                consumed: b"2;title".len() + 1,
+                reached: Boundary::OSC_END | Boundary::GROUND,
+                kind: Some(StringKind::Osc),
+                introducer: None,
+                end: Some(StringEnd::Bel),
+                byte: Some(0x07),
+            })
+        );
+        assert!(terminal.is_vt_ground().unwrap());
+        assert_eq!(terminal.title().unwrap(), b"title");
+    }
+
+    #[test]
+    fn vt_write_until_exposes_only_the_requested_metadata() {
+        // The same byte ends an APC and starts an OSC. Only requested
+        // metadata is exposed; with both flags, the ended string's kind wins.
+        let input = b"\x1b_a\x9d2;t\x07";
+        for (boundaries, kind, introducer, end) in [
+            (
+                Boundary::OSC_START,
+                StringKind::Osc,
+                Some(StringIntroducer::C1),
+                None,
+            ),
+            (
+                Boundary::APC_END,
+                StringKind::Apc,
+                None,
+                Some(StringEnd::Aborted),
+            ),
+        ] {
+            let mut terminal = Terminal::new(8, 2).unwrap();
+            assert_eq!(
+                terminal.vt_write_until(input, boundaries).unwrap(),
+                Some(WriteStop {
+                    consumed: 4,
+                    reached: boundaries,
+                    kind: Some(kind),
+                    introducer,
+                    end,
+                    byte: Some(0x9d),
+                }),
+                "{boundaries:?}"
+            );
+            // BEL ends the OSC, but asking only for GROUND must not expose
+            // string metadata, even though the C enum fields contain zeros.
+            assert_eq!(
+                terminal
+                    .vt_write_until(&input[4..], Boundary::GROUND)
+                    .unwrap(),
+                Some(WriteStop {
+                    consumed: 4,
+                    reached: Boundary::GROUND,
+                    kind: None,
+                    introducer: None,
+                    end: None,
+                    byte: None,
+                })
+            );
+            assert_eq!(terminal.title().unwrap(), b"t");
+        }
+    }
+
     #[test]
     fn cursor_at_prompt_follows_semantic_prompts() {
         let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
@@ -5606,23 +5720,57 @@ mod tests {
         assert_eq!(codepoint, 0xe9);
     }
 
+    /// Only a full reset sent by the program (RIS) fires `on_reset`, and the
+    /// terminal has already reset itself by then.
     #[test]
-    fn reset_is_reported_for_a_full_reset_only() {
-        let seen = RefCell::new(Vec::new());
+    fn reset_callback_fires_only_on_ris() {
+        let callback_count: Cell<usize> = Cell::new(0);
+        let title_in_callback: RefCell<Option<Vec<u8>>> = RefCell::new(None);
+        let cursor_in_callback: Cell<Option<u16>> = Cell::new(None);
+
         let mut terminal = Terminal::new(80, 24).expect("terminal should initialize");
+
         terminal
-            .on_reset(|term| seen.borrow_mut().push(term.cursor_x().unwrap_or(u16::MAX)))
+            .on_reset(|term| {
+                callback_count.set(callback_count.get() + 1);
+                // Record rather than assert here: a panic in a callback
+                // aborts the whole test binary.
+                *title_in_callback.borrow_mut() = term.title().ok().map(<[u8]>::to_owned);
+                cursor_in_callback.set(term.cursor_x().ok());
+            })
             .expect("callback should register");
-        terminal.vt_write(b"abc\x1b[!p");
-        terminal.reset();
-        assert!(
-            seen.borrow().is_empty(),
-            "DECSTR and Terminal::reset are not reported"
-        );
+
+        // Set a title first so we can tell whether RIS already cleared it
+        // when the callback ran, as upstream documents.
+        terminal.vt_write(b"\x1b]2;Before Reset\x1b\\");
+        assert_eq!(terminal.title().unwrap(), b"Before Reset");
+        // A progress report and a program status report fire their own
+        // callbacks, and RIS fires both again just before this one. Sending
+        // them here catches this callback being registered under either
+        // sibling's option instead.
+        terminal.vt_write(b"\x1b]9;4;1;50\x1b\\");
+        terminal.vt_write(b"\x1b]7501;state=working:id=build\x1b\\");
+        assert_eq!(callback_count.get(), 0);
+        // The callback runs before the bytes after `ESC c` are printed.
         terminal.vt_write(b"abc\x1bcxy");
+        assert_eq!(callback_count.get(), 1);
+        assert_eq!(*title_in_callback.borrow(), Some(Vec::new()));
+        assert_eq!(cursor_in_callback.get(), Some(0));
         assert_eq!(terminal.cursor_x().unwrap(), 2);
-        drop(terminal);
-        assert_eq!(seen.into_inner(), [0], "reset before `xy` was printed");
+
+        // `vt_write_until` feeds the same stream, so it fires too.
+        terminal.vt_write(b"\x1b");
+        terminal.vt_write_until(b"c", Boundary::GROUND).unwrap();
+        assert_eq!(callback_count.get(), 2);
+
+        // A soft reset (DECSTR) doesn't count as a full reset.
+        terminal.vt_write(b"\x1b[!p");
+        assert_eq!(callback_count.get(), 2);
+
+        // Upstream's `ghostty_terminal_reset` resets the terminal directly
+        // and only the stream handling `ESC c` calls the callback.
+        terminal.reset();
+        assert_eq!(callback_count.get(), 2);
     }
 
     #[test]
@@ -6174,6 +6322,9 @@ mod tests {
         assert!(fresh.primary.pages >= 1);
         assert!(fresh.primary.resident_bytes > 0);
         assert!(fresh.primary.resident_bytes <= fresh.primary.virtual_bytes);
+        // Compressed bytes are already part of the resident ones, whether or
+        // not this platform compresses (the compressed figures are zero then).
+        assert!(fresh.primary.compressed_bytes <= fresh.primary.resident_bytes);
         assert_eq!(fresh.alternate, ScreenMemory::default());
 
         for i in 0..20_000 {
