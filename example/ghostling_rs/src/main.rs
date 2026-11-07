@@ -15,7 +15,7 @@ use std::{
 
 use macroquad::{
     miniquad::{
-        CursorIcon, conf,
+        CursorIcon,
         window::{order_quit, set_mouse_cursor},
     },
     prelude::*,
@@ -1059,15 +1059,9 @@ impl<'alloc> Input<'alloc> {
         mods
     }
 
-    // Match Ghostty's rectangular-selection modifier convention so Ghostling feels
-    // the same across platforms: Option alone on macOS, Ctrl/Super+Alt elsewhere.
+    // Match Ghostty's rectangular-selection modifier convention on macOS: Option.
     fn selection_rectangle_mods(mods: key::Mods) -> bool {
-        let is_alt = mods.contains(key::Mods::ALT);
-        if cfg!(target_os = "macos") {
-            is_alt
-        } else {
-            is_alt && (mods.contains(key::Mods::CTRL) || mods.contains(key::Mods::SUPER))
-        }
+        mods.contains(key::Mods::ALT)
     }
 
     /// Decide whether a mouse gesture should manipulate terminal selection or be
@@ -1370,20 +1364,12 @@ impl SelectionState<'_> {
     }
 }
 
-/// Configuration for macroquad.
-///
-/// By default the window is resizable and DPI-aware,
-/// while prioritizing Wayland over X11 on Linux.
+/// Configuration for macroquad: a resizable, DPI-aware window.
 fn macroquad_conf() -> Conf {
     Conf {
         window_title: "ghostling-rs".to_owned(),
         window_resizable: true,
         high_dpi: true,
-        platform: conf::Platform {
-            // Default to Wayland and fallback to X11 on Linux.
-            linux_backend: conf::LinuxBackend::WaylandWithX11Fallback,
-            ..Default::default()
-        },
         ..Default::default()
     }
 }
@@ -1523,8 +1509,8 @@ mod pty {
                     // Distinguish "no data right now" from real errors.
                     Err(Errno::EAGAIN) => return Ok(()),
                     Err(Errno::EINTR) => continue, // retry the read
-                    // On Linux, the slave closing often produces EIO rather
-                    // than a clean EOF (read returning 0). Treat it the same.
+                    // The slave closing can produce EIO rather than a clean
+                    // EOF (read returning 0). Treat it the same.
                     Err(Errno::EIO) => return Err(PtyError::EndOfStream),
                     Err(err) => return Err(PtyError::OtherError(err)),
                 };

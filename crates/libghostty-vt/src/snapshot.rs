@@ -971,7 +971,6 @@ mod tests {
     /// it must not let [`IncrementalDecoder::next`] write into the freed
     /// terminal.
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn next_after_swapping_out_the_terminal_is_not_a_use_after_free() {
         let bytes = snapshot_with_history();
         let alloc = crate::alloc::testing::Guard::allocator();

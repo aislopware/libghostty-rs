@@ -61,7 +61,6 @@ const TRACING_TARGET: &str = "libghostty_vt::ghostty";
 /// so the scope is recorded as the structured `ghostty_scope` field rather than
 /// as the `tracing` target.
 #[cfg(feature = "tracing")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tracing")))]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct TracingLogger;
 #[cfg(feature = "tracing")]

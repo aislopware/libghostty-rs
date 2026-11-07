@@ -1,13 +1,15 @@
 name: CI
 
+# The crates build for macOS and iOS 27.2 on Apple silicon only, on an Apple
+# silicon Mac, so every job runs on the macOS runner the prebuilt workflow
+# uses.
 on:
   push:
-    branches: [master, "release/**"]
+    branches: [main]
   pull_request:
-    # `edited` covers a retargeted base, which happens to every stacked PR
-    # once the one below it merges.
+    # `edited` covers a retargeted base.
     types: [opened, synchronize, reopened, edited]
-    branches: [master, "release/**", "stack/ghostty-*"]
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,39 +17,18 @@ concurrency:
 
 jobs:
   check:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macOS aarch64
-            runner: namespace-profile-libghostty-mac
-            flake_check: true
-          - name: Linux aarch64
-            runner: namespace-profile-linux-aarch64-sm
-            flake_check: true
-          - name: Linux x86_64
-            runner: namespace-profile-linux-x86-sm
-            flake_check: true
+    name: macOS aarch64
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Namespace cache
-        uses: namespacelabs/nscloud-cache-action@15799a6b54e5765f85b2aac25b3f0df43ed571c0 # v1.4.3
-        if: runner.os == 'Linux'
-        with:
-          cache: |
-            nix
-            rust
-
-      - name: Setup Namespace cache
-        uses: namespacelabs/nscloud-cache-action@15799a6b54e5765f85b2aac25b3f0df43ed571c0 # v1.4.3
-        if: runner.os == 'macOS'
-        with:
-          cache: |
-            xcode
-            rust
+      # The iOS check and the examples build against the 27.2 SDKs, which the
+      # xcode-27 image has in Xcode 27.2 (not its default).
+      - name: Select Xcode 27.2
+        run: |
+          set -euo pipefail
+          app=$(ls -d /Applications/Xcode_27.2*.app | sort | tail -n 1)
+          sudo xcode-select --switch "$app"
 
       - name: Install Nix
         uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
@@ -64,59 +45,26 @@ jobs:
         run: nix build .#default --print-build-logs
 
       - name: Run flake checks
-        if: matrix.flake_check
         run: nix flake check --print-build-logs
 
-      # Exercises the prebuilt iOS library: prebuilt.toml lists it, and the
-      # build script downloads, verifies and unpacks it. The source build of
+      # Exercises the prebuilt iOS libraries: prebuilt.toml lists them, and the
+      # build script downloads, verifies and unpacks them. The source build of
       # the xcframework path runs in the prebuilt workflow.
-      - name: Check iOS prebuilt library
-        if: runner.os == 'macOS'
-        run: nix develop -c cargo check --locked -p libghostty-vt-sys --target aarch64-apple-ios
+      - name: Check iOS prebuilt libraries
+        run: |
+          nix develop -c cargo check --locked -p libghostty-vt-sys --target aarch64-apple-ios
+          nix develop -c cargo check --locked -p libghostty-vt-sys --target aarch64-apple-ios-sim
 
       # The examples are their own workspace, so the flake checks above never
       # build them. `--locked` also fails if example/Cargo.lock is stale.
       - name: Build examples
-        run: |
-          nix develop -c cargo build --locked --manifest-path example/Cargo.toml --workspace
-          nix develop -c cargo test --locked --manifest-path example/Cargo.toml -p wasm_rs
-
-      # Link and execute Rust + Zig together. cargo check cannot catch ABI,
-      # callback table, allocator, or unexpected host-import failures.
-      - name: Test wasm32
-        if: matrix.name == 'Linux x86_64'
-        run: |
-          nix develop -c bash -euc '
-            for profile in dev release; do
-              cargo build --locked --manifest-path example/Cargo.toml -p wasm_rs --lib --example smoke --target wasm32-unknown-unknown --profile "$profile"
-              out="example/target/wasm32-unknown-unknown/${profile/dev/debug}"
-              node example/wasm_rs/run.mjs "$out/examples/smoke.wasm" "$out/wasm_rs.wasm"
-            done
-          '
-
-      - name: Test wasm64
-        if: matrix.name == 'Linux x86_64'
-        run: |
-          nix develop .#wasm64 -c bash -euc '
-            for profile in dev release; do
-              cargo build -Zbuild-std=std,panic_abort --locked --manifest-path example/Cargo.toml -p wasm_rs --lib --example smoke --target wasm64-unknown-unknown --profile "$profile"
-              out="example/target/wasm64-unknown-unknown/${profile/dev/debug}"
-              node example/wasm_rs/run.mjs "$out/examples/smoke.wasm" "$out/wasm_rs.wasm"
-            done
-          '
+        run: nix develop -c cargo build --locked --manifest-path example/Cargo.toml --workspace
 
   miri:
-    name: Linux Miri
-    runs-on: namespace-profile-linux-x86-sm
+    name: macOS Miri
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Namespace cache
-        uses: namespacelabs/nscloud-cache-action@15799a6b54e5765f85b2aac25b3f0df43ed571c0 # v1.4.3
-        with:
-          cache: |
-            nix
-            rust
 
       - name: Install Nix
         uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6

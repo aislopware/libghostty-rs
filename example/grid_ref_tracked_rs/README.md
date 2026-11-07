@@ -12,7 +12,3 @@ for a new point.
 ```sh
 cargo run --manifest-path example/Cargo.toml -p grid_ref_tracked_rs
 ```
-
-When building with `link-dynamic`, set `DYLD_LIBRARY_PATH` on macOS or
-`LD_LIBRARY_PATH` on Linux to the directory containing the generated
-`libghostty-vt` shared library.

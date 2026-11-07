@@ -32,7 +32,9 @@
     ghostty,
     ...
   }:
-    flake-utils.lib.eachDefaultSystem (
+    # Apple silicon Macs only: the crates build for macOS and iOS 27.2 on
+    # Apple silicon, on an Apple silicon Mac (build.rs refuses anything else).
+    flake-utils.lib.eachSystem ["aarch64-darwin"] (
       system: let
         pkgs = import nixpkgs {
           inherit system;
@@ -46,18 +48,12 @@
         buildToolchain = pkgs.rust-bin.stable.${rustVersion}.minimal.override {
           targets = rustTargets;
         };
-        rustTargets =
-          ["wasm32-unknown-unknown"]
-          ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-            "x86_64-unknown-linux-gnu"
-            "x86_64-unknown-linux-musl"
-          ]
-          ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            # iOS builds go through the vendored zig xcframework path and
-            # need the target's std so the dev shell can cargo-check them.
-            "aarch64-apple-ios"
-            "aarch64-apple-ios-sim"
-          ];
+        # The host's aarch64-apple-darwin plus iOS, whose std the dev shell
+        # needs to cargo-check the iOS targets.
+        rustTargets = [
+          "aarch64-apple-ios"
+          "aarch64-apple-ios-sim"
+        ];
 
         checkToolchain = pkgs.rust-bin.stable.${rustVersion}.default.override {
           extensions = ["clippy" "rustfmt"];
@@ -88,6 +84,10 @@
             (previousAttrs.patches or [])
             ++ ["${ghostty}/nix/patches/zig-0.17-ios-process-replace.patch"];
         });
+        # Ghostty's own package of the pinned commit. Its `dev` output holds
+        # lib/libghostty-vt.a and include/, which the checks link through
+        # LIBGHOSTTY_VT_SYS_LIB_DIR: the Nix sandbox cannot download the
+        # prebuilt library.
         ghosttyLib = ghostty.packages.${system}.libghostty-vt;
 
         miriCommand = pkgs.writeShellApplication {
@@ -120,42 +120,35 @@
           ];
         };
 
-        commonArgs =
-          {
-            pname = "libghostty-rs";
-            version = "0.2.1";
-            inherit src;
-            strictDeps = true;
-            # No workspace member enables the optional `png` feature, so turn it
-            # on here; otherwise the PNG decoder is never type-checked, linted,
-            # doc-checked or tested in CI. Setting it in the shared arguments
-            # also builds the dependency artifacts with it, so the checks
-            # below don't each rebuild png and its dependencies.
-            cargoExtraArgs = "--locked --features libghostty-vt-sys/pkg-config --features libghostty-vt/png";
+        commonArgs = {
+          pname = "libghostty-rs";
+          version = "0.2.1";
+          inherit src;
+          strictDeps = true;
+          # No workspace member enables the optional `png` feature, so turn it
+          # on here; otherwise the PNG decoder is never type-checked, linted,
+          # doc-checked or tested in CI. Setting it in the shared arguments
+          # also builds the dependency artifacts with it, so the checks
+          # below don't each rebuild png and its dependencies.
+          cargoExtraArgs = "--locked --features libghostty-vt/png";
 
-            nativeBuildInputs = [
-              pkgs.pkg-config
-              pkgs.clang
-            ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-              pkgs.cctools
-              pkgs.xcbuild
-            ];
+          LIBGHOSTTY_VT_SYS_LIB_DIR = "${ghosttyLib.dev}";
 
-            buildInputs =
-              [
-                ghosttyLib
-                pkgs.libclang
-                pkgs.openssl
-              ]
-              ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-                pkgs.apple-sdk
-                pkgs.libiconv
-              ];
-          }
-          // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
-            DEVELOPER_DIR = "${pkgs.apple-sdk}";
-            SDKROOT = "${pkgs.apple-sdk.sdkroot}";
-          };
+          nativeBuildInputs = [
+            pkgs.clang
+            pkgs.cctools
+            pkgs.xcbuild
+          ];
+
+          buildInputs = [
+            pkgs.libclang
+            pkgs.apple-sdk
+            pkgs.libiconv
+          ];
+
+          DEVELOPER_DIR = "${pkgs.apple-sdk}";
+          SDKROOT = "${pkgs.apple-sdk.sdkroot}";
+        };
 
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
@@ -201,7 +194,7 @@
           # Regenerate the bindings from the pinned Ghostty headers and fail if
           # they differ from the checked-in ones. GHOSTTY_INCLUDE_DIR is used
           # instead of GHOSTTY_SOURCE_DIR so that the build script keeps linking
-          # the prebuilt library rather than building Ghostty from source.
+          # Ghostty's package rather than building Ghostty from source.
           #
           # The headers come from the flake input, but users build against
           # the commit pinned in build.rs. Nothing else ties the two together,
@@ -227,7 +220,7 @@
                 fi
                 # Not commonArgs.cargoExtraArgs: it also enables libghostty-vt
                 # features, which cargo rejects with only the -sys crate selected.
-                cargo run --locked --features libghostty-vt-sys/pkg-config -p libghostty-vt-sys \
+                cargo run --locked -p libghostty-vt-sys \
                   --features libghostty-vt-sys/bindgen-tool --bin gen-bindings
                 cargo fmt -p libghostty-vt-sys
                 for file in bindings.rs layouts.rs; do
@@ -270,19 +263,6 @@
               cargoTestExtraArgs = "-p libghostty-vt --doc";
             }
           );
-
-          # Upstream ghostty exercises both link modes in CI, so run the test
-          # suite against the shared library as well. Cargo adds the emitted
-          # link-search paths to the test binaries' library path, so the
-          # ghostty .so is found at runtime.
-          cargo-test-dynamic = craneLib.cargoTest (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoExtraArgs = "${commonArgs.cargoExtraArgs} --features libghostty-vt-sys/link-dynamic";
-              cargoTestExtraArgs = "--workspace --all-targets";
-            }
-          );
         };
 
         apps.miri = flake-utils.lib.mkApp {
@@ -293,53 +273,23 @@
           packages = [
             devToolchain
             zigPkg
-            pkgs.nodejs
             pkgs.clang
             pkgs.libclang
-            pkgs.pkg-config
-            pkgs.openssl
-            pkgs.cmake
-            pkgs.ninja
-          ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-            pkgs.libx11
-            pkgs.libxcursor
-            pkgs.libxrandr
-            pkgs.libxinerama
-            pkgs.libxi
-            pkgs.libGL
-            pkgs.libxkbcommon
-            pkgs.wayland
           ];
 
           shellHook = ''
             export LIBCLANG_PATH=${pkgs.libclang.lib}/lib
-          '' + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
             # Unset Nix Darwin SDK env vars and remove the xcbuild
             # xcrun wrapper so Zig's SDK detection uses the real
-            # system xcrun/xcode-select.
+            # system xcrun/xcode-select (Xcode 27.2's SDKs).
             unset SDKROOT
             unset DEVELOPER_DIR
             export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v xcbuild | tr '\n' ':')
-          '' + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-            # Make Ghostling able to find libGL on Linux.
-            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath [
-              pkgs.libglvnd
-              pkgs.wayland
-              pkgs.libx11
-              pkgs.libxkbcommon
-              pkgs.libxi
-            ]}"
           '';
         };
 
         devShells.miri = pkgs.mkShell {
           packages = [miriToolchain];
-        };
-
-        # Rust ships no wasm64 std; reuse the nightly toolchain with rust-src
-        # to build it with -Zbuild-std, without changing the native MSRV.
-        devShells.wasm64 = pkgs.mkShell {
-          packages = [miriToolchain zigPkg pkgs.nodejs];
         };
       }
     );

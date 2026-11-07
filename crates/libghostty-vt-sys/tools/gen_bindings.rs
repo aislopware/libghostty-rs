@@ -8,21 +8,12 @@ use bindgen::callbacks::{EnumVariantValue, IntKind, ItemInfo, ItemKind, ParseCal
 use heck::ToShoutySnakeCase;
 use quote::ToTokens;
 
-// Match the vendored targets in build.rs, including the iOS xcframeworks.
-// Clang spells the simulator targets differently.
+// The targets build.rs supports (its TARGETS), as Rust and Clang spell them:
+// macOS and iOS 27.2 on Apple silicon, and the iOS simulator.
 const TARGETS: &[(&str, &str)] = &[
-    ("x86_64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"),
-    ("x86_64-unknown-linux-musl", "x86_64-unknown-linux-musl"),
-    ("aarch64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"),
-    ("aarch64-unknown-linux-musl", "aarch64-unknown-linux-musl"),
-    ("aarch64-apple-darwin", "arm64-apple-darwin"),
-    ("x86_64-apple-darwin", "x86_64-apple-darwin"),
-    ("aarch64-apple-ios", "arm64-apple-ios"),
-    ("aarch64-apple-ios-sim", "arm64-apple-ios-simulator"),
-    ("aarch64-linux-android", "aarch64-linux-android"),
-    ("x86_64-linux-android", "x86_64-linux-android"),
-    ("wasm32-unknown-unknown", "wasm32-unknown-unknown"),
-    ("wasm64-unknown-unknown", "wasm64-unknown-unknown"),
+    ("aarch64-apple-darwin", "arm64-apple-macos27.2"),
+    ("aarch64-apple-ios", "arm64-apple-ios27.2"),
+    ("aarch64-apple-ios-sim", "arm64-apple-ios27.2-simulator"),
 ];
 
 fn main() {
@@ -37,7 +28,7 @@ fn main() {
         let dir = PathBuf::from(option_env!("LIBGHOSTTY_VT_SYS_INCLUDE_DIR").unwrap_or_else(
             || {
                 panic!(
-                    "the build script installed no ghostty headers (pkg-config build?); \
+                    "the build script installed no ghostty headers; \
                  set GHOSTTY_INCLUDE_DIR or GHOSTTY_SOURCE_DIR"
                 )
             },
@@ -58,21 +49,14 @@ fn main() {
         .header(header.to_string_lossy())
         .clang_arg(format!("-I{}", include_dir.to_string_lossy()))
         // These headers only need freestanding C headers. Use Clang's builtins
-        // instead of the host libc headers when parsing a different ABI.
+        // instead of the host SDK's when parsing for iOS, so no iOS SDK is needed.
         .clang_arg("-ffreestanding")
-        // Clang 21 predefines __musl__ for musl targets, and its stddef.h
-        // then defers to the system's even when freestanding. No musl headers
-        // exist on the generator host, and the types are the same, so take the
-        // builtin path.
-        .clang_arg("-U__musl__")
         // GHOSTTY_ENUM_TYPED gives every enum `: int` only in C23 or C++11 (the
         // clang `c_fixed_enum` branch is gone upstream). Under clang's default
         // gnu17 an enum with no negative values is `unsigned int`, which would
         // turn most `Type` aliases from c_int into c_uint. Parse as C23 so the
         // enums keep the C ABI type libghostty-vt declares (`enum(c_int)`).
         .clang_arg("-std=c23")
-        // Wasm only adds utility functions; the C types are shared.
-        .clang_arg("-D__wasm__")
         .allowlist_function("[Gg]hostty.*")
         .allowlist_type("[Gg]hostty.*")
         .allowlist_var("GHOSTTY_.*")
@@ -128,24 +112,7 @@ fn main() {
         }
     }
 
-    // Defining __wasm__ exposes these declarations to bindgen, but upstream
-    // only exports the functions on Wasm. Bindgen's attribute callback only
-    // supports types, so attach the target gates to the generated functions
-    // here. Parse Rust rather than depending on bindgen's whitespace or docs.
-    let mut bindings = syn::parse_file(&declarations.unwrap()).unwrap();
-    for item in &mut bindings.items {
-        if let syn::Item::ForeignMod(block) = item {
-            for item in &mut block.items {
-                if let syn::ForeignItem::Fn(function) = item
-                    && function.sig.ident.to_string().starts_with("ghostty_wasm_")
-                {
-                    function
-                        .attrs
-                        .push(syn::parse_quote!(#[cfg(target_family = "wasm")]));
-                }
-            }
-        }
-    }
+    let bindings = syn::parse_file(&declarations.unwrap()).unwrap();
     write_generated(&manifest_dir.join("src/bindings.rs"), bindings);
     let mut checks = syn::File {
         shebang: None,

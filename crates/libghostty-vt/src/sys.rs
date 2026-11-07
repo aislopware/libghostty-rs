@@ -21,10 +21,7 @@ static RANDOM_SOURCE: RwLock<Option<SecureRandomSource>> = RwLock::new(None);
 /// `None`.
 ///
 /// By default libghostty draws secure random bytes from the platform
-/// (`getrandom` or `arc4random_buf` on POSIX, CNG on Windows). Targets without one, such as
-/// wasm32-freestanding, have no default, and operations that need entropy fail
-/// with [`Error::IoError`](crate::Error::IoError) until a source is set. When
-/// set, it is used instead of the platform source on every target.
+/// (`arc4random_buf`). When set, the source is used instead.
 ///
 /// The source runs inside calls into libghostty, so a panic in it aborts the
 /// process.

@@ -618,10 +618,8 @@ pub(crate) mod testing {
     /// gets its own mapping, and freeing it replaces the mapping with an
     /// inaccessible one, so the pages are released but the address can't be
     /// reused either.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) struct Guard;
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     impl Guard {
         pub(crate) fn allocator() -> Allocator<'static> {
             const VTABLE: ffi::AllocatorVtable = ffi::AllocatorVtable {
@@ -635,7 +633,6 @@ pub(crate) mod testing {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     mod guard_pages {
         use std::ffi::{c_int, c_void};
 
@@ -654,9 +651,7 @@ pub(crate) mod testing {
         const PROT_READ_WRITE: c_int = 0x1 | 0x2;
         const MAP_PRIVATE: c_int = 0x2;
         const MAP_FIXED: c_int = 0x10;
-        #[cfg(target_os = "linux")]
-        const MAP_ANON: c_int = 0x20;
-        #[cfg(target_os = "macos")]
+        // Darwin's value, the same on macOS and iOS.
         const MAP_ANON: c_int = 0x1000;
         const MAP_FAILED: *mut c_void = usize::MAX as *mut c_void;
         // Every page size we run on is a multiple of this, so mappings are

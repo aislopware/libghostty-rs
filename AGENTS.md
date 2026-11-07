@@ -2,8 +2,10 @@
 
 ## Building
 
+- Targets: macOS and iOS 27.2+ on Apple silicon only (`aarch64-apple-darwin`, `aarch64-apple-ios`, `aarch64-apple-ios-sim`), built on an Apple silicon Mac (owner ruling, 2026-11-07). `build.rs` refuses any other target or host; never add other platforms, shared linking or compatibility paths back
 - Links the prebuilt libghostty-vt that `crates/libghostty-vt-sys/prebuilt.toml` lists for the target (downloaded, sha256-checked, cached outside `target/`); no Zig needed
 - Zig 0.17.x only for a source build: set `GHOSTTY_SOURCE_DIR` to a Ghostty checkout (pin bumps, binding regeneration)
+- `LIBGHOSTTY_VT_SYS_LIB_DIR` links an unpacked library with no network (the Nix checks pass Ghostty's package)
 - Enter dev shell: `nix develop`
 - Check: `cargo check`
 - Test: `cargo test -p libghostty-vt-sys`

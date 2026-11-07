@@ -891,7 +891,6 @@ mod tests {
 
     /// Fill a terminal with enough matching lines that the search has
     /// scrollback history to search, not just the active area.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn history_search<'t>(terminal: &mut Terminal<'t, '_>) -> Search<'static, 't> {
         for _ in 0..5000 {
             terminal.vt_write(b"hit\r\n");
@@ -906,7 +905,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn ticking_after_terminal_drop_is_rejected() {
         let alloc = crate::alloc::testing::Guard::allocator();
 
@@ -931,7 +929,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn search_can_be_dropped_from_an_effect_callback() {
         let alloc = crate::alloc::testing::Guard::allocator();
         let slot = crate::sync_cell::RefCell::new(None);

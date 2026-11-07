@@ -13,7 +13,6 @@ allocator_api = ["dep:allocator-api2"]
 kitty-graphics = ["libghostty-vt-sys/kitty-graphics"]
 png = ["dep:png"]
 log = ["dep:log"]
-link-dynamic = ["libghostty-vt-sys/link-dynamic"]
 tracing = ["dep:tracing"]
 
 [dependencies]
@@ -27,6 +26,3 @@ tracing = { version = "0.1.44", optional = true }
 
 [dev-dependencies]
 libghostty-vt-sys.workspace = true
-
-[package.metadata.docs.rs]
-all-features = true

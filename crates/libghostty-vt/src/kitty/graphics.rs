@@ -155,8 +155,8 @@
 //!     terminal: &Terminal<'_, '_>,
 //!     image_id: u32,
 //! ) -> Result<(), Box<dyn std::error::Error>> {
-//!     // Upstream can be built without Kitty graphics (it always is for
-//!     // wasm). Then there is no image storage, and so nothing to print.
+//!     // Ghostty can be built without Kitty graphics. Then there is no
+//!     // image storage, and so nothing to print.
 //!     let Some(graphics) = terminal.kitty_graphics()? else {
 //!         return Ok(());
 //!     };
@@ -408,8 +408,8 @@
 //!     // screen. That is why the frames below use the render state's
 //!     // placements generation to know when to read the list again.
 //!     //
-//!     // Upstream can be built without Kitty graphics (it always is for
-//!     // wasm), and then there is no storage at all, so stop here.
+//!     // Ghostty can be built without Kitty graphics, and then there is no
+//!     // storage at all, so stop here.
 //!     let Some(storage) = terminal.kitty_graphics()? else {
 //!         println!("Kitty graphics are disabled at build time");
 //!         return Ok(());
@@ -654,8 +654,8 @@ pub struct Image<'t> {
 /// // though it has no position of its own.
 /// terminal.vt_write(b"\x1b_Ga=T,U=1,f=32,i=3,s=1,v=1,c=2,r=1,q=2;AP8A/w==\x1b\\");
 ///
-/// // Upstream can be built without Kitty graphics (it always is for wasm).
-/// // Then there is no image storage, and so nothing to iterate.
+/// // Ghostty can be built without Kitty graphics. Then there is no image
+/// // storage, and so nothing to iterate.
 /// let Some(graphics) = terminal.kitty_graphics()? else {
 ///     return Ok(());
 /// };
@@ -718,9 +718,8 @@ impl Terminal<'_, '_> {
     ///
     /// The frozen ABI reports these keys as `UNSUPPORTED` in such a build
     /// (upstream's 0b8b998 headers said `NO_VALUE`), so both read as `None`.
-    /// Our Cargo features don't control the Zig build: freestanding targets
-    /// such as wasm always leave Kitty graphics out, and `link-dynamic` can
-    /// pick up a library built without them.
+    /// Our Cargo features don't control the Zig build: a library linked
+    /// through `LIBGHOSTTY_VT_SYS_LIB_DIR` may be built without them.
     fn get_kitty<T>(&self, tag: ffi::TerminalData::Type) -> Result<Option<T>> {
         match self.get_optional(tag) {
             Err(Error::Unsupported) => Ok(None),
@@ -856,13 +855,9 @@ impl Terminal<'_, '_> {
         // work without issue, since both Zig and Rust basically share the same underlying
         // string format.
         //
-        // On Unix-like platforms, both Zig and Rust agree that a file path is just an
-        // arbitrary sequence of bytes without any NULs in between. The tricky part is
-        // that Windows uses (noncompliant) UTF-16 file paths natively and it just so
-        // happens both Zig and Rust use WTF-8 as a workaround against that whole can
-        // of worms, though in Rust it's more of an implementation detail.
-        // The Kitty graphics protocol itself is poorly defined on Windows, but for all
-        // intents and purposes, the bytes are always valid `OsStr`s and `Path`s.
+        // On macOS and iOS, both Zig and Rust agree that a file path is just an
+        // arbitrary sequence of bytes without any NULs in between, so the bytes are
+        // always valid `OsStr`s and `Path`s.
         let os_str = unsafe { OsStr::from_encoded_bytes_unchecked(bytes) };
         Ok(Some(Path::new(os_str)))
     }

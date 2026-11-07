@@ -1,5 +1,6 @@
 # Builds libghostty-vt from the ghostty commit build.rs pins, for every Rust
-# target the prebuilt path serves, publishes each static library as a release
+# target build.rs supports (macOS and iOS 27.2 on Apple silicon, and the iOS
+# simulator), checks that each carries build.rs's deployment target, publishes each static library as a release
 # asset named by its sha256, and commits crates/libghostty-vt-sys/prebuilt.toml
 # so build.rs can find, verify and cache them with no Zig on the machine.
 #
@@ -30,7 +31,8 @@ permissions:
   contents: read
 
 jobs:
-  # Reads the pin from build.rs, the one place it lives.
+  # Reads the pin and the deployment target from build.rs, the one place they
+  # live. It builds nothing, so it runs on Linux.
   setup:
     runs-on: ubuntu-24.04
     outputs:
@@ -38,6 +40,7 @@ jobs:
       commit: ${{ steps.pin.outputs.commit }}
       tag: ${{ steps.pin.outputs.tag }}
       zig: ${{ steps.pin.outputs.zig }}
+      deployment_target: ${{ steps.pin.outputs.deployment_target }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -49,8 +52,9 @@ jobs:
           repo=$(sed -n 's/^const GHOSTTY_REPO: &str = "\(.*\)";$/\1/p' "$file")
           commit=$(sed -n 's/^const GHOSTTY_COMMIT: &str = "\([0-9a-f]\{40\}\)";$/\1/p' "$file")
           zig=$(sed -n 's/^const ZIG_VERSION: &str = "\(.*\)";$/\1/p' "$file")
-          if [[ -z "$repo" || -z "$commit" || -z "$zig" ]]; then
-            echo "error: could not read GHOSTTY_REPO, GHOSTTY_COMMIT and ZIG_VERSION from $file" >&2
+          deployment_target=$(sed -n 's/^const DEPLOYMENT_TARGET: &str = "\(.*\)";$/\1/p' "$file")
+          if [[ -z "$repo" || -z "$commit" || -z "$zig" || -z "$deployment_target" ]]; then
+            echo "error: could not read GHOSTTY_REPO, GHOSTTY_COMMIT, ZIG_VERSION and DEPLOYMENT_TARGET from $file" >&2
             exit 1
           fi
           {
@@ -58,6 +62,7 @@ jobs:
             echo "commit=$commit"
             echo "tag=vt-${commit:0:12}"
             echo "zig=$zig"
+            echo "deployment_target=$deployment_target"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -83,29 +88,11 @@ jobs:
             runner: xcode-27
             triples: aarch64-apple-ios aarch64-apple-ios-sim
             zig_args: -Demit-xcframework=true
-          # An explicit -Dtarget builds against Zig's bundled glibc headers at
-          # its default version rather than the runner's (2.39, whose headers
-          # redirect some calls to symbols only glibc 2.38 and later have), so
-          # the archive links on older distributions too.
-          - name: Linux x86_64
-            id: linux-x86_64
-            runner: ubuntu-24.04
-            triples: x86_64-unknown-linux-gnu
-            zig_args: -Demit-xcframework=false -Dtarget=x86_64-linux-gnu
-          - name: Linux aarch64
-            id: linux-aarch64
-            runner: ubuntu-24.04-arm
-            triples: aarch64-unknown-linux-gnu
-            zig_args: -Demit-xcframework=false -Dtarget=aarch64-linux-gnu
-          - name: Linux aarch64 musl
-            id: linux-aarch64-musl
-            runner: ubuntu-24.04-arm
-            triples: aarch64-unknown-linux-musl
-            zig_args: -Demit-xcframework=false -Dtarget=aarch64-linux-musl
     env:
       GHOSTTY_REPO: ${{ needs.setup.outputs.repo }}
       GHOSTTY_COMMIT: ${{ needs.setup.outputs.commit }}
       ZIG_VERSION: ${{ needs.setup.outputs.zig }}
+      DEPLOYMENT_TARGET: ${{ needs.setup.outputs.deployment_target }}
       TRIPLES: ${{ matrix.triples }}
     steps:
       - name: Check out ghostty at the pin
@@ -124,7 +111,6 @@ jobs:
       # The libraries target macOS and iOS 27.2, so they build against the
       # 27.2 SDKs, which the xcode-27 image has in Xcode 27.2 (not its default).
       - name: Select Xcode 27.2
-        if: runner.os == 'macOS'
         run: |
           set -euo pipefail
           app=$(ls -d /Applications/Xcode_27.2*.app | sort | tail -n 1)
@@ -178,14 +164,18 @@ jobs:
 
               # The deployment target the objects were built for, as the linker
               # will see it, rather than a number copied from Ghostty's build.
+              # build.rs checks it in meta.toml, so a library for another
+              # deployment target is never published.
               minos = ""
-              if "apple" in triple:
-                  load = subprocess.run(["otool", "-l", str(stage / "lib" / "libghostty-vt.a")],
-                                        check=True, capture_output=True, text=True).stdout.split()
-                  for i, word in enumerate(load):
-                      if word == "minos":
-                          minos = load[i + 1]
-                          break
+              load = subprocess.run(["otool", "-l", str(stage / "lib" / "libghostty-vt.a")],
+                                    check=True, capture_output=True, text=True).stdout.split()
+              for i, word in enumerate(load):
+                  if word == "minos":
+                      minos = load[i + 1]
+                      break
+              if minos != os.environ["DEPLOYMENT_TARGET"]:
+                  raise SystemExit(f"{triple}: built for {minos or 'no'} deployment target, "
+                                   f"not {os.environ['DEPLOYMENT_TARGET']}")
 
               meta = [
                   f'ghostty = "{os.environ["GHOSTTY_COMMIT"]}"',
@@ -222,7 +212,7 @@ jobs:
               sha = hashlib.sha256(data).hexdigest()
               (out / f"{sha}.tar.gz").write_bytes(data)
               (out / f"{triple}.sha256").write_text(sha + "\n")
-              print(f"{triple}: {sha}.tar.gz ({len(data)} bytes), os_version_min={minos or 'n/a'}")
+              print(f"{triple}: {sha}.tar.gz ({len(data)} bytes), os_version_min={minos}")
 
       - name: Upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -231,6 +221,7 @@ jobs:
           path: ${{ runner.temp }}/out/*
           if-no-files-found: error
 
+  # Uploads and commits; it builds nothing, so it runs on Linux.
   publish:
     needs: [setup, build]
     runs-on: ubuntu-24.04

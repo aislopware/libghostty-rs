@@ -5,7 +5,11 @@
 > targets the frozen libghostty-vt ABI of [aislopware/ghostty](https://github.com/aislopware/ghostty), and links a
 > prebuilt library by sha256, so Zig is only needed with `GHOSTTY_SOURCE_DIR`. It adds a `Send` terminal, one-call
 > dirty-row reads, packed-cell decoding from the build's type manifest, VT-format replay, and memory-usage and
-> render-state queries. Windows is dropped. Onicode pins a rev on `main`.
+> render-state queries. Onicode pins a rev on `main`.
+>
+> Since 2026-11-07 (owner ruling) it builds for macOS and iOS 27.2 and later on Apple silicon only:
+> `aarch64-apple-darwin`, `aarch64-apple-ios` and `aarch64-apple-ios-sim`, on an Apple silicon Mac. Linux, Android,
+> Wasm, Windows, Intel Macs, shared linking and pkg-config are gone, and nothing is kept for compatibility.
 
 Rust bindings and safe API for [libghostty-vt](https://ghostty.org), the virtual terminal emulator library extracted from [Ghostty](https://ghostty.org).
 
@@ -61,36 +65,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 No Zig is needed by default. `libghostty-vt-sys` links a prebuilt static
 `libghostty-vt` for the Ghostty commit pinned in `build.rs`: `prebuilt.toml`
 maps each Rust target to a release asset and its sha256, and the build script
-downloads it with `curl`, checks the hash, and caches it outside `target/`
-under `$LIBGHOSTTY_VT_SYS_CACHE_DIR` (or the platform cache directory), one
-directory per hash. A target with no entry, or an archive whose hash does not
-match, fails the build with the fix in the message. Prebuilt targets:
-`aarch64-apple-darwin`, `aarch64-apple-ios`, `aarch64-apple-ios-sim`,
-`x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
+downloads it with `curl`, checks the hash and that it was built for macOS or
+iOS 27.2, and caches it under `~/Library/Caches/libghostty-vt` (or
+`$LIBGHOSTTY_VT_SYS_CACHE_DIR`), one directory per hash. A target with no
+entry, or an archive whose hash does not match, fails the build with the fix
+in the message. Targets: `aarch64-apple-darwin`, `aarch64-apple-ios` and
+`aarch64-apple-ios-sim`, built on an Apple silicon Mac; any other target or
+host fails the build.
 
 The other ways in, in the order the build script tries them:
 
 - `GHOSTTY_SOURCE_DIR`: build that Ghostty checkout with Zig 0.17 (on PATH, or
   named by `ZIG`). This is the only path that runs Zig. Source builds derive the
   optimize mode from Cargo's profile (override with `LIBGHOSTTY_VT_SYS_OPTIMIZE`)
-  and target the `baseline` CPU (override with `LIBGHOSTTY_VT_SYS_CPU`).
-  `GHOSTTY_ZIG_SYSTEM_DIR` passes a pre-fetched Zig package directory to
-  `zig build --system` for network-free builds.
-- `LIBGHOSTTY_VT_SYS_LIB_DIR`: link a directory holding `lib/` and `include/`.
-- The opt-in `libghostty-vt-sys/pkg-config` feature: an installed
-  `libghostty-vt`. The bindings are generated from the libghostty-vt 1.0.0
-  headers, whose C ABI holds for every 1.x release, so any 1.x library links;
-  only the pinned commit carries the fork's terminal fixes.
+  and target the `baseline` CPU (override with `LIBGHOSTTY_VT_SYS_CPU`). macOS
+  builds host-native; iOS builds through Ghostty's xcframework emit, which needs
+  Xcode with the iOS SDK.
+- `LIBGHOSTTY_VT_SYS_LIB_DIR`: link a directory holding `lib/libghostty-vt.a`
+  and `include/`. The Nix checks use it with Ghostty's own package of the
+  pinned commit, since the Nix sandbox cannot download the prebuilt library.
 
-Nix builds in this repository prefetch the pinned Ghostty source and Ghostty's
-Zig package dependencies up front, then set `GHOSTTY_SOURCE_DIR` and
-`GHOSTTY_ZIG_SYSTEM_DIR` for the Cargo build.
-
-By default, `libghostty-vt` and `libghostty-vt-sys` link `libghostty-vt.a`.
-This statically links the Ghostty VT archive, but the final binary may still
-depend on platform runtime libraries. To link the shared library instead,
-enable `libghostty-vt/link-dynamic`, which needs a source build or
-`LIBGHOSTTY_VT_SYS_LIB_DIR`: the prebuilt archives are static only.
+The library is always linked statically.
 
 ```sh
 nix develop
@@ -116,11 +111,11 @@ The generator reads the headers from `GHOSTTY_INCLUDE_DIR`, or from
 installed for that same build. It parses them for each vendored target using
 explicit Clang targets and verifies that the API declarations are identical.
 `layouts.rs` holds compile-time size, alignment and field-offset assertions,
-gated by the target ABI reported by `rustc`. Targets share checks only when
-Clang generated identical assertions. Adding a vendored target also requires
-adding it to the generator's `TARGETS` list; unlisted targets receive no layout
-checks. Regeneration needs no target SDKs or installed cross-target Rust standard
-libraries, and ordinary builds need neither Clang nor the generator.
+gated by the target ABI reported by `rustc`, for the three Apple targets in the
+generator's `TARGETS` list. Targets share checks only when Clang generated
+identical assertions. Regeneration needs no target SDKs or installed
+cross-target Rust standard libraries, and ordinary builds need neither Clang
+nor the generator.
 
 ### Miri Verification
 
@@ -137,51 +132,6 @@ Ghostty FFI backend.
 
 Use `nix develop .#miri` when working interactively with the same toolchain.
 
-### WebAssembly
-
-Wasm support is selected by the Rust target, not a Cargo feature. The existing
-Rust API links Ghostty's static archive into the application's Wasm module;
-no JavaScript bindings or browser dependencies are added to either library crate.
-Do not enable `link-dynamic` on Wasm.
-
-| Rust target | Zig target | Toolchain |
-| --- | --- | --- |
-| `wasm32-unknown-unknown` | `wasm32-freestanding` | Stable Rust, including the MSRV |
-| `wasm64-unknown-unknown` | `wasm64-freestanding` | Nightly with `rust-src` and `-Zbuild-std=std,panic_abort`; a Memory64-capable runtime |
-
-The pinned Ghostty revision builds both freestanding architectures. Its
-`wasm32-wasi` build fails because its panic/stderr path requires libc without
-linking it, and its standalone Emscripten module fails to link libc. WASI
-(including Rust's preview variants) and Emscripten are not supported by this
-integration until those upstream build paths work. `wasm32v1-none` is a
-`no_std` Rust target; these crates require `std`. Wasm does not imply support
-for Rust threads, filesystem access, or networking.
-
-The [browser example](example/wasm_rs/README.md) ports upstream's `wasm-vt`
-demo to the Rust API. Its ABI and allocator smoke tests are separate from
-the demo. Run both with Node.js (provided by the dev shells):
-
-```sh
-nix develop -c cargo build --locked --manifest-path example/Cargo.toml -p wasm_rs --lib --example smoke --target wasm32-unknown-unknown --release
-nix develop -c node example/wasm_rs/run.mjs example/target/wasm32-unknown-unknown/release/examples/smoke.wasm example/target/wasm32-unknown-unknown/release/wasm_rs.wasm
-
-nix develop .#wasm64 -c cargo build -Zbuild-std=std,panic_abort --locked --manifest-path example/Cargo.toml -p wasm_rs --lib --example smoke --target wasm64-unknown-unknown --release
-nix develop .#wasm64 -c node example/wasm_rs/run.mjs example/target/wasm64-unknown-unknown/release/examples/smoke.wasm example/target/wasm64-unknown-unknown/release/wasm_rs.wasm
-```
-
-CI also executes Debug builds. Ghostty's Debug Wasm build imports
-`env.log(pointer, length)`; the example runner supplies it. Its release build
-discards logs instead of calling the native logger hook. Embedders must
-register a cryptographically secure source through
-`sys::set_secure_random_source` before using operations that require entropy;
-freestanding Ghostty has no platform entropy source. Browser applications can
-supply Web Crypto from their own host integration.
-
-The raw `ghostty_wasm_*` allocation helpers are available through
-`libghostty-vt-sys` on Wasm. Rust callers normally use the existing owned types
-and allocator APIs instead; the helpers are intended for hosts managing raw
-Wasm memory. Do not mix their allocations with `ghostty_free` or Rust's heap.
-
 ### Running the example
 
 The examples live in their own workspace under `example/`. To run one, enter
@@ -191,9 +141,4 @@ its folder and run:
 cargo run
 ```
 
-With `link-dynamic`, `cargo run` finds the shared library by itself. To run a
-built example directly instead, set `LD_LIBRARY_PATH` on Linux or
-`DYLD_LIBRARY_PATH` on macOS to the directory containing the generated
-`libghostty-vt` shared library. The examples have their own target directory,
-so with the default vendored build it is under `example/target/`, at
-`<profile>/build/libghostty-vt-sys-*/out/ghostty-install/lib`.
+The examples have their own target directory, `example/target/`.
