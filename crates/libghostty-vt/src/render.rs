@@ -1429,6 +1429,20 @@ impl CellIteration<'_, '_> {
         Ok(unsafe { value.assume_init() })
     }
 
+    /// As [`Self::get`], for a key that reports `NO_VALUE` when the cell has
+    /// nothing to give.
+    fn get_optional<T>(&self, tag: ffi::RenderStateRowCellsData::Type) -> Result<Option<T>> {
+        let mut value = MaybeUninit::<T>::zeroed();
+        let result = unsafe {
+            ffi::ghostty_render_state_row_cells_get(
+                self.iter.0.as_raw(),
+                tag,
+                value.as_mut_ptr().cast(),
+            )
+        };
+        from_optional_result_uninit(result, value)
+    }
+
     /// The raw cell value.
     pub fn raw_cell(&self) -> Result<Cell> {
         self.get(ffi::RenderStateRowCellsData::RAW).map(Cell)
@@ -1457,12 +1471,9 @@ impl CellIteration<'_, '_> {
     /// case the caller should use whatever default foreground color it want
     /// (e.g. the terminal foreground).
     pub fn fg_color(&self) -> Result<Option<RgbColor>> {
-        let res = self.get::<ffi::ColorRgb>(ffi::RenderStateRowCellsData::FG_COLOR);
-        match res {
-            Ok(o) => Ok(Some(o.into())),
-            Err(Error::InvalidValue) => Ok(None),
-            Err(e) => Err(e),
-        }
+        Ok(self
+            .get_optional::<ffi::ColorRgb>(ffi::RenderStateRowCellsData::FG_COLOR)?
+            .map(Into::into))
     }
 
     /// The resolved background color of the cell.
@@ -1475,12 +1486,9 @@ impl CellIteration<'_, '_> {
     /// caller should use whatever default background color it wants
     /// (e.g. the terminal background).
     pub fn bg_color(&self) -> Result<Option<RgbColor>> {
-        let res = self.get::<ffi::ColorRgb>(ffi::RenderStateRowCellsData::BG_COLOR);
-        match res {
-            Ok(o) => Ok(Some(o.into())),
-            Err(Error::InvalidValue) => Ok(None),
-            Err(e) => Err(e),
-        }
+        Ok(self
+            .get_optional::<ffi::ColorRgb>(ffi::RenderStateRowCellsData::BG_COLOR)?
+            .map(Into::into))
     }
 
     /// Get the grapheme codepoints.

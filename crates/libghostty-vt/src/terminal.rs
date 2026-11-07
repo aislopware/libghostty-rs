@@ -1143,9 +1143,10 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     }
     /// Get the current SGR style of the cursor.
     ///
-    /// This is the style that will be applied to newly printed characters.
+    /// This is the style that will be applied to newly printed characters,
+    /// not the cursor's shape.
     pub fn cursor_style(&self) -> Result<style::Style> {
-        self.get::<ffi::Style>(Data::CURSOR_STYLE)
+        self.get::<ffi::Style>(Data::CURSOR_SGR_STYLE)
             .and_then(std::convert::TryInto::try_into)
     }
     /// The mouse pointer shape requested by the application through OSC 22.
@@ -1539,7 +1540,7 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
 
     /// Enable or disable Glyph Protocol APC handling.
     ///
-    /// Disabling the protocol makes the terminal ignore Glyph Protocol APC
+    /// The protocol is disabled by default. Disabling the protocol makes the terminal ignore Glyph Protocol APC
     /// sequences and clears the session's glyph glossary.
     pub fn set_glyph_protocol_enabled(&mut self, enabled: bool) -> Result<&mut Self> {
         self.set(Opt::GLYPH_PROTOCOL, &enabled)?;
@@ -3796,8 +3797,10 @@ handlers! {
     /// Call the given function in response to a device attributes query
     /// (CSI c, CSI > c, or CSI = c).
     ///
-    /// Return `Some` with the response data,
-    /// or return `None` to silently ignore.
+    /// Return `Some` with the response data, or `None` to answer with the
+    /// library's defaults, a VT220 with ANSI color: `CSI ? 62 ; 22 c` to
+    /// `CSI c`, `CSI > 1 ; 0 ; 0 c` to `CSI > c`, and `DCS ! | 00000000 ST`
+    /// to `CSI = c`. Without this callback the terminal answers the same way.
     pub fn on_device_attributes(
         &mut self,
         tag = DEVICE_ATTRIBUTES,

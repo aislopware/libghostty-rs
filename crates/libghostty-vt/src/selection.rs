@@ -271,7 +271,11 @@ impl Terminal<'_, '_> {
         let mut value = ffi::Selection::default();
 
         let result = unsafe {
-            ffi::ghostty_terminal_select_output(self.inner.as_raw(), grid_ref.inner, &raw mut value)
+            ffi::ghostty_terminal_select_output(
+                self.inner.as_raw(),
+                &raw const grid_ref.inner,
+                &raw mut value,
+            )
         };
 
         let sel = from_optional_result(result, value)?;
