@@ -166,7 +166,7 @@ fn main() {
     // the prebuilt one. libghostty is pre-1.0, so this crate intentionally does
     // not promise compatibility with every installed C API revision.
     #[cfg(feature = "pkg-config")]
-    if try_pkg_config(link_mode, &target) {
+    if try_pkg_config(link_mode) {
         return;
     }
 
@@ -863,7 +863,7 @@ fn warn_unused_xcframework(lib_dir: &Path) {
 }
 
 #[cfg(feature = "pkg-config")]
-fn try_pkg_config(link_mode: LinkMode, target: &str) -> bool {
+fn try_pkg_config(link_mode: LinkMode) -> bool {
     let mut config = pkg_config::Config::new();
     let lib = match link_mode {
         LinkMode::Dynamic => config.probe(link_mode.pkg_config_name()),
@@ -878,14 +878,14 @@ fn try_pkg_config(link_mode: LinkMode, target: &str) -> bool {
     };
 
     if let LinkMode::Static = link_mode {
-        emit_static_pkg_config_metadata(&lib, target);
+        emit_static_pkg_config_metadata(&lib);
     }
     emit_include_metadata(&lib.include_paths);
     true
 }
 
 #[cfg(feature = "pkg-config")]
-fn emit_static_pkg_config_metadata(lib: &pkg_config::Library, target: &str) {
+fn emit_static_pkg_config_metadata(lib: &pkg_config::Library) {
     for path in &lib.link_paths {
         println!("cargo:rustc-link-search=native={}", path.display());
     }
