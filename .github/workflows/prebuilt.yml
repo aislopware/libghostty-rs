@@ -227,6 +227,9 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # To run CI on the manifest commit: a push made with this token starts
+      # no workflow, but a dispatch does.
+      actions: write
     env:
       GH_TOKEN: ${{ github.token }}
       GHOSTTY_COMMIT: ${{ needs.setup.outputs.commit }}
@@ -308,3 +311,6 @@ jobs:
           git commit -q -m "build: list the prebuilt libghostty-vt for ghostty ${GHOSTTY_COMMIT:0:12}" \
             -m "Built by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
           git push origin "HEAD:$GITHUB_REF_NAME"
+          # The pin's own CI ran before these libraries were listed; this is
+          # the commit that checks them.
+          gh workflow run ci.yml --ref "$GITHUB_REF_NAME"

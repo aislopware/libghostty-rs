@@ -4,6 +4,9 @@ name: CI
 # silicon Mac, so every job runs on the macOS runner the prebuilt workflow
 # uses.
 on:
+  # Dispatched by the prebuilt workflow on the commit that lists a new pin's
+  # libraries.
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -50,8 +53,18 @@ jobs:
       # Exercises the prebuilt iOS libraries: prebuilt.toml lists them, and the
       # build script downloads, verifies and unpacks them. The source build of
       # the xcframework path runs in the prebuilt workflow.
+      # A commit that moves the pin comes before the libraries for it: the
+      # prebuilt workflow builds them, lists them and dispatches this workflow
+      # on that commit, which checks them.
       - name: Check iOS prebuilt libraries
         run: |
+          set -euo pipefail
+          pin=$(sed -n 's/^const GHOSTTY_COMMIT: &str = "\([0-9a-f]\{40\}\)";$/\1/p' crates/libghostty-vt-sys/build.rs)
+          listed=$(sed -n 's/^ghostty = "\([0-9a-f]\{40\}\)"$/\1/p' crates/libghostty-vt-sys/prebuilt.toml)
+          if [[ "$pin" != "$listed" ]]; then
+            echo "::notice::prebuilt.toml lists ${listed:0:12}, the pin is ${pin:0:12}: the prebuilt workflow checks it once listed."
+            exit 0
+          fi
           nix develop -c cargo check --locked -p libghostty-vt-sys --target aarch64-apple-ios
           nix develop -c cargo check --locked -p libghostty-vt-sys --target aarch64-apple-ios-sim
 
