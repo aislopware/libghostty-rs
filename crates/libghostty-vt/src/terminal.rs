@@ -495,21 +495,21 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     /// `ESC \` stops after the ESC with [`StringEnd::StEsc`] and leaves the
     /// `\` to the next call, where it completes the terminator.
     ///
-    /// [`Boundaries::GROUND`] is a state, not a byte: asking for it at ground
+    /// [`Boundary::GROUND`] is a state, not a byte: asking for it at ground
     /// stops at once, consuming nothing, so write what follows without it.
     ///
     /// Like [`Self::vt_write`], the input is assumed to be untrusted.
     ///
     /// ```rust
-    /// use libghostty_vt::{Terminal, terminal::{Boundaries, StringEnd, StringKind}};
+    /// use libghostty_vt::{Terminal, terminal::{Boundary, StringEnd, StringKind}};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut terminal = Terminal::new(80, 24)?;
     /// let data = b"a\x1b_Gq=1;\x1b\\b";
-    /// let want = Boundaries::APC_START | Boundaries::APC_END;
+    /// let want = Boundary::APC_START | Boundary::APC_END;
     ///
     /// let start = terminal.vt_write_until(data, want)?.expect("an APC starts");
-    /// assert_eq!(start.reached, Boundaries::APC_START);
+    /// assert_eq!(start.reached, Boundary::APC_START);
     /// assert_eq!(start.kind, Some(StringKind::Apc));
     /// let content = start.consumed;
     ///
@@ -532,7 +532,7 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     pub fn vt_write_until(
         &mut self,
         data: &[u8],
-        boundaries: Boundaries,
+        boundaries: Boundary,
     ) -> Result<Option<WriteStop>> {
         // SAFETY: `&mut self` is exclusive and no libghostty call is running.
         unsafe { self.detached().reap() };
@@ -2950,7 +2950,7 @@ bitflags::bitflags! {
     /// terminator ST is `ESC \` or 0x9C. [`GROUND`](Self::GROUND) is
     /// different: the state between sequences, not a byte inside one.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct Boundaries: u32 {
+    pub struct Boundary: u32 {
         /// The stream is not inside an escape sequence or a partial UTF-8
         /// character: a safe point to insert sequences of your own. At
         /// ground already, the write stops at once and consumes nothing.
@@ -2975,7 +2975,7 @@ bitflags::bitflags! {
     }
 }
 
-impl Boundaries {
+impl Boundary {
     const STARTS: Self = Self::APC_START
         .union(Self::DCS_START)
         .union(Self::OSC_START);
@@ -3034,7 +3034,7 @@ pub enum StringEnd {
 pub struct WriteStop {
     /// The input bytes consumed, including the one that reached the
     /// boundary: 0 when the stream was at ground already and
-    /// [`Boundaries::GROUND`] was asked for.
+    /// [`Boundary::GROUND`] was asked for.
     pub consumed: usize,
     /// Which of the asked-for boundaries the stopping byte reached. Usually
     /// one. Two when a byte ends a string and returns to ground (BEL, CAN,
@@ -3043,7 +3043,7 @@ pub struct WriteStop {
     /// a DCS header, with [`StringEnd::Aborted`] and
     /// [`StringIntroducer::C1`]. A start and an end of the same kind never
     /// come together.
-    pub reached: Boundaries,
+    pub reached: Boundary,
     /// The kind of the string that started or ended; when one byte does
     /// both, the kind that ended (the start's flag names the other). `None`
     /// when no start or end was reached, or the kind is one these bindings
@@ -3060,9 +3060,9 @@ pub struct WriteStop {
 
 impl WriteStop {
     fn from_raw(raw: &ffi::TerminalWriteStop) -> Self {
-        let reached = Boundaries::from_bits_truncate(raw.reached);
-        let start = reached.intersects(Boundaries::STARTS);
-        let end = reached.intersects(Boundaries::ENDS);
+        let reached = Boundary::from_bits_truncate(raw.reached);
+        let start = reached.intersects(Boundary::STARTS);
+        let end = reached.intersects(Boundary::ENDS);
         Self {
             consumed: raw.consumed,
             reached,
@@ -4656,7 +4656,7 @@ mod tests {
 
     #[test]
     fn vt_write_until_stops_at_ground() {
-        let ground = Boundaries::GROUND;
+        let ground = Boundary::GROUND;
         let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
         // Already at ground: the stop consumes nothing.
         assert!(terminal.is_vt_ground().unwrap());
@@ -4691,14 +4691,14 @@ mod tests {
 
     #[test]
     fn vt_write_until_splits_an_apc_at_its_terminator() {
-        let want = Boundaries::APC_START | Boundaries::APC_END | Boundaries::GROUND;
+        let want = Boundary::APC_START | Boundary::APC_END | Boundary::GROUND;
         let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
         let data = b"\x1b_Gq=1;\x1b\\b";
         // Not at ground once ESC is in: the start stop lands on `_`.
         terminal.vt_write(&data[..1]);
         let start = terminal.vt_write_until(&data[1..], want).unwrap().unwrap();
         assert_eq!(start.consumed, 1);
-        assert_eq!(start.reached, Boundaries::APC_START);
+        assert_eq!(start.reached, Boundary::APC_START);
         assert_eq!(start.kind, Some(StringKind::Apc));
         assert_eq!(start.introducer, Some(StringIntroducer::Esc));
         assert_eq!((start.end, start.byte), (None, Some(b'_')));
@@ -4710,7 +4710,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(&data[content..content + end.consumed - 1], b"Gq=1;");
-        assert_eq!(end.reached, Boundaries::APC_END);
+        assert_eq!(end.reached, Boundary::APC_END);
         assert_eq!(end.kind, Some(StringKind::Apc));
         assert_eq!(
             (end.introducer, end.end, end.byte),
@@ -4723,7 +4723,7 @@ mod tests {
             .vt_write_until(&data[rest..], want)
             .unwrap()
             .unwrap();
-        assert_eq!((ground.consumed, ground.reached), (1, Boundaries::GROUND));
+        assert_eq!((ground.consumed, ground.reached), (1, Boundary::GROUND));
         // Ground is a state: asking for it again stops at once, so the rest
         // goes without it.
         let at_ground = terminal
@@ -4731,7 +4731,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(at_ground.consumed, 0);
-        let without = Boundaries::APC_START | Boundaries::APC_END;
+        let without = Boundary::APC_START | Boundary::APC_END;
         assert_eq!(
             terminal.vt_write_until(&data[rest + 1..], without).unwrap(),
             None
@@ -4741,12 +4741,12 @@ mod tests {
 
     #[test]
     fn vt_write_until_reports_one_byte_ending_one_string_and_starting_another() {
-        let want = Boundaries::APC_END | Boundaries::OSC_START | Boundaries::OSC_END;
+        let want = Boundary::APC_END | Boundary::OSC_START | Boundary::OSC_END;
         let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
         let data = b"\x1b_a\x9d2;t\x07";
         let both = terminal.vt_write_until(data, want).unwrap().unwrap();
         assert_eq!(both.consumed, 4);
-        assert_eq!(both.reached, Boundaries::APC_END | Boundaries::OSC_START);
+        assert_eq!(both.reached, Boundary::APC_END | Boundary::OSC_START);
         // The kind is the string that ended; the start's flag names the other.
         assert_eq!(both.kind, Some(StringKind::Apc));
         assert_eq!(both.introducer, Some(StringIntroducer::C1));
@@ -4757,7 +4757,7 @@ mod tests {
 
         let end = terminal.vt_write_until(&data[4..], want).unwrap().unwrap();
         assert_eq!(&data[4..4 + end.consumed - 1], b"2;t");
-        assert_eq!(end.reached, Boundaries::OSC_END);
+        assert_eq!(end.reached, Boundary::OSC_END);
         assert_eq!(end.kind, Some(StringKind::Osc));
         assert_eq!((end.end, end.byte), (Some(StringEnd::Bel), Some(0x07)));
         assert_eq!(terminal.title().unwrap(), b"t");
@@ -4768,7 +4768,7 @@ mod tests {
         let mut terminal = Terminal::new(8, 2).expect("terminal should initialize");
         assert!(
             terminal
-                .vt_write_until(b"hello", Boundaries::empty())
+                .vt_write_until(b"hello", Boundary::empty())
                 .is_err()
         );
         assert_eq!(terminal.cursor_x().unwrap(), 0);
