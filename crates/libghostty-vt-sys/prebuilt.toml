@@ -4,17 +4,17 @@
 # a release asset named by its sha256. build.rs refuses a file whose ghostty
 # commit is not its pin, and a target with no table here.
 
-ghostty = "504b41739cdb848814e8fd0aecec27f4b364a1e7"
+ghostty = "fa7553fea0c9957e7ec032d667060eefc3d20ca2"
 zig = "0.17.0"
 
 [aarch64-apple-darwin]
-url = "https://github.com/aislopware/libghostty-rs/releases/download/vt-504b41739cdb/c5ef0bceb48bcbdb9a0a100cbdcd2bf6a34572c7343cc4ae1c380eb3bb29f077.tar.gz"
-sha256 = "c5ef0bceb48bcbdb9a0a100cbdcd2bf6a34572c7343cc4ae1c380eb3bb29f077"
+url = "https://github.com/aislopware/libghostty-rs/releases/download/vt-fa7553fea0c9/1aada60a8147bd1c9338f1f06d830ce2994a38fb00c8eeb0726e98680726ed0b.tar.gz"
+sha256 = "1aada60a8147bd1c9338f1f06d830ce2994a38fb00c8eeb0726e98680726ed0b"
 
 [aarch64-apple-ios-sim]
-url = "https://github.com/aislopware/libghostty-rs/releases/download/vt-504b41739cdb/cc48de85b7fef2b852cdec8d03dcec163bff6bf869bcd33e075706f15ed5fe7b.tar.gz"
-sha256 = "cc48de85b7fef2b852cdec8d03dcec163bff6bf869bcd33e075706f15ed5fe7b"
+url = "https://github.com/aislopware/libghostty-rs/releases/download/vt-fa7553fea0c9/eb80667bf0a8845148b79bd19978093ff53e77332fc2c7c9207edfa903235ccc.tar.gz"
+sha256 = "eb80667bf0a8845148b79bd19978093ff53e77332fc2c7c9207edfa903235ccc"
 
 [aarch64-apple-ios]
-url = "https://github.com/aislopware/libghostty-rs/releases/download/vt-504b41739cdb/14c6830ea2c588cc4cdfc3a4563e7319eed34f8aee27335f50fe7f9c81761977.tar.gz"
-sha256 = "14c6830ea2c588cc4cdfc3a4563e7319eed34f8aee27335f50fe7f9c81761977"
+url = "https://github.com/aislopware/libghostty-rs/releases/download/vt-fa7553fea0c9/35725823c3d7225a01c1bee49fc5bf03ca2c9a22a506c1b28794443706eeb151.tar.gz"
+sha256 = "35725823c3d7225a01c1bee49fc5bf03ca2c9a22a506c1b28794443706eeb151"
