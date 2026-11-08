@@ -56,7 +56,8 @@ impl<'alloc> Encoder<'alloc> {
 
     /// Set one option. `value` must point at the option's C type. As with the
     /// key encoder, the typed setters rule out every failure but a library
-    /// built without input encoding, which is checked in debug builds.
+    /// built without input encoding, which is checked in debug builds. The
+    /// size, whose cell dimensions may be zero, reports its error instead.
     unsafe fn set(
         &mut self,
         option: ffi::MouseEncoderOption::Type,
@@ -151,12 +152,20 @@ impl<'alloc> Encoder<'alloc> {
         self
     }
     /// Set renderer size context.
-    pub fn set_size(&mut self, value: EncoderSize) -> &mut Self {
+    ///
+    /// Returns [`Error::InvalidValue`] if either cell dimension is zero, which
+    /// the types cannot rule out. On error, the encoder keeps its previous size.
+    pub fn set_size(&mut self, value: EncoderSize) -> Result<&mut Self> {
         let raw: ffi::MouseEncoderSize = value.into();
-        unsafe {
-            self.set(Opt::SIZE, std::ptr::from_ref(&raw).cast());
-        }
-        self
+        // SAFETY: `raw` is the option's C type and outlives the call.
+        from_result(unsafe {
+            ffi::ghostty_mouse_encoder_set(
+                self.0.as_raw(),
+                Opt::SIZE,
+                std::ptr::from_ref(&raw).cast(),
+            )
+        })?;
+        Ok(self)
     }
     /// Set whether any mouse button is currently pressed.
     pub fn set_any_button_pressed(&mut self, value: bool) -> &mut Self {
@@ -462,7 +471,8 @@ mod tests {
                 padding_bottom: 0,
                 padding_right: 0,
                 padding_left: 0,
-            });
+            })
+            .expect("a size with nonzero cells");
         let mut ev = Event::new().expect("an event");
         ev.set_action(Action::Press)
             .set_button(Some(Button::Four))
@@ -473,5 +483,23 @@ mod tests {
         // And again into the same vector, whose spare room is now short by a few bytes.
         enc.encode_to_vec(&ev, &mut out).expect("grows again");
         assert_eq!(out, b"\x1b[<64;2;2M\x1b[<64;2;2M");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "calls into libghostty")]
+    fn a_zero_cell_is_refused_and_the_size_kept() {
+        let size = |cell_width| EncoderSize {
+            screen_width: 800,
+            screen_height: 600,
+            cell_width,
+            cell_height: 16,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_right: 0,
+            padding_left: 0,
+        };
+        let mut enc = Encoder::new().expect("an encoder");
+        enc.set_size(size(8)).expect("a size with nonzero cells");
+        assert!(matches!(enc.set_size(size(0)), Err(Error::InvalidValue)));
     }
 }

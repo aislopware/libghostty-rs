@@ -1,6 +1,6 @@
 //! Handling OSC (Operating System Command) escape sequences.
 
-use std::{ffi::CStr, marker::PhantomData, mem::MaybeUninit};
+use std::{marker::PhantomData, mem::MaybeUninit};
 
 use crate::{
     alloc::{Allocator, Object},
@@ -175,16 +175,13 @@ impl<'p> Command<'p, '_> {
         let raw_type = unsafe { ffi::ghostty_osc_command_type(self.inner) };
         Some(match raw_type {
             Type::CHANGE_WINDOW_TITLE => {
-                // The output type is `const char *`, a thin pointer to a
-                // NUL-terminated string. Reading it straight into a (fat)
-                // `&str` would leave the length zeroed.
-                let title = self.get::<*const std::ffi::c_char>(Data::CHANGE_WINDOW_TITLE_STR)?;
-                // SAFETY: `osc.h` documents CHANGE_WINDOW_TITLE_STR as a
-                // pointer to a NUL-terminated string, owned by the parser and
-                // valid until the next `ghostty_osc_*` call on it. The `'p`
-                // borrow of the parser rules out such a call while the
-                // `&'p CStr` lives.
-                let title = unsafe { CStr::from_ptr(title) };
+                // The output type is a GhosttyString: the bytes and their
+                // length, not NUL-terminated.
+                let title = self.get::<ffi::String>(Data::CHANGE_WINDOW_TITLE_STR)?;
+                // SAFETY: `osc.h` documents the bytes as owned by the parser
+                // and valid until the next `ghostty_osc_*` call on it. The `'p`
+                // borrow of the parser rules out such a call while they live.
+                let title = unsafe { title.to_bytes() };
                 // Upstream doesn't promise UTF-8, so hand the bytes over as
                 // they are and let callers decide whether to validate.
                 CommandType::ChangeWindowTitle { title }
@@ -313,7 +310,7 @@ pub enum CommandType<'p> {
     /// let command = parser.end(0x5C);
     /// assert!(matches!(
     ///     command.command_type(),
-    ///     CommandType::ChangeWindowTitle { title } if title == c"hello"
+    ///     CommandType::ChangeWindowTitle { title } if title == b"hello"
     /// ));
     ///
     /// // The title isn't checked for UTF-8: these bytes are passed through.
@@ -324,7 +321,7 @@ pub enum CommandType<'p> {
     /// let command = parser.end(0x5C);
     /// assert!(matches!(
     ///     command.command_type(),
-    ///     CommandType::ChangeWindowTitle { title } if title.to_bytes() == b"\xff"
+    ///     CommandType::ChangeWindowTitle { title } if title == b"\xff"
     /// ));
     /// # Ok(())
     /// # }
@@ -335,10 +332,9 @@ pub enum CommandType<'p> {
         /// Memory is owned by the parser and valid until the next call to the
         /// same parser.
         ///
-        /// The title is not guaranteed to be UTF-8. It ends at the first NUL
-        /// byte: the parser stores the title bytes as given, so a title fed to
-        /// it with an embedded NUL is cut off there.
-        title: &'p CStr,
+        /// The title is not guaranteed to be UTF-8, and is passed through as
+        /// the program sent it.
+        title: &'p [u8],
     },
     ChangeWindowIcon,
     SemanticPrompt,
@@ -517,4 +513,33 @@ pub enum Terminator {
     St = ffi::OscTerminator::ST,
     /// The bell character, BEL (byte 0x07).
     Bel = ffi::OscTerminator::BEL,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandType, Parser};
+
+    fn title(parser: &mut Parser<'_>, input: &[u8]) -> Vec<u8> {
+        parser.reset();
+        for &byte in input {
+            parser.next_byte(byte);
+        }
+        match parser.end(0x07).command_type() {
+            CommandType::ChangeWindowTitle { title } => title.to_vec(),
+            other => panic!("expected a title, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "calls into libghostty")]
+    fn a_title_is_exactly_its_bytes_nul_included() {
+        let mut parser = Parser::new().unwrap();
+        assert_eq!(
+            title(&mut parser, b"2;a much longer title"),
+            b"a much longer title"
+        );
+        assert_eq!(title(&mut parser, b"2;short"), b"short");
+        assert_eq!(title(&mut parser, b"0;"), b"");
+        assert_eq!(title(&mut parser, b"2;a\0b"), b"a\0b");
+    }
 }
