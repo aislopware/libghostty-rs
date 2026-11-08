@@ -1,9 +1,9 @@
 use std::{error::Error, io};
 
 use libghostty_vt::{
-    screen::TrackedGridRef,
-    terminal::{Point, PointCoordinate, PointSpace},
     Terminal,
+    screen::{TrackedGridRef, cell},
+    terminal::{Point, PointCoordinate, PointSpace},
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -14,9 +14,9 @@ fn codepoint_at_tracked_ref(terminal: &Terminal<'_, '_>, tracked: &TrackedGridRe
         .ok_or_else(|| io::Error::other("tracked grid reference has no value"))?;
     let cell = snapshot.cell()?;
 
-    assert!(cell.has_text()?, "tracked cell should contain text");
+    let (has_text, codepoint) = cell.get_multi((cell::HasText, cell::Codepoint))?;
+    assert!(has_text, "tracked cell should contain text");
 
-    let codepoint = cell.codepoint()?;
     let character = char::from_u32(codepoint)
         .ok_or_else(|| io::Error::other("cell codepoint is not a Unicode scalar value"))?;
 

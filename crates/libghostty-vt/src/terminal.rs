@@ -5695,7 +5695,7 @@ mod tests {
             .unwrap()
             .cell()
             .unwrap()
-            .codepoint()
+            .get(crate::screen::cell::Codepoint)
             .unwrap();
         assert_eq!(codepoint, 0xe9);
     }
@@ -6254,7 +6254,7 @@ mod tests {
         snapshot
             .cell()
             .expect("tracked snapshot should resolve to a cell")
-            .codepoint()
+            .get(crate::screen::cell::Codepoint)
             .expect("tracked snapshot cell should expose a codepoint")
     }
 
