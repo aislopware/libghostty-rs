@@ -2370,15 +2370,15 @@ mod tests {
                     codepoint, tag, wide, text, styling, style, hyperlink, protected, semantic
                 ),
                 (
-                    cell.get(cell::Codepoint).unwrap(),
-                    cell.get(cell::ContentTag).unwrap(),
-                    cell.get(cell::Wide).unwrap(),
-                    cell.get(cell::HasText).unwrap(),
-                    cell.get(cell::HasStyling).unwrap(),
-                    cell.get(cell::StyleId).unwrap(),
-                    cell.get(cell::HasHyperlink).unwrap(),
-                    cell.get(cell::Protected).unwrap(),
-                    cell.get(cell::SemanticContent).unwrap()
+                    cell.codepoint().unwrap(),
+                    cell.content_tag().unwrap(),
+                    cell.wide().unwrap(),
+                    cell.has_text().unwrap(),
+                    cell.has_styling().unwrap(),
+                    cell.style_id().unwrap(),
+                    cell.has_hyperlink().unwrap(),
+                    cell.is_protected().unwrap(),
+                    cell.semantic_content().unwrap()
                 )
             );
             assert_eq!(duplicate, codepoint);
@@ -2441,11 +2441,13 @@ mod tests {
             .unwrap();
         assert_eq!(tag, CellContentTag::BgColorPalette);
         assert_eq!(palette, PaletteIndex(173));
+        assert_eq!(cell.bg_color_palette().unwrap(), palette);
 
         terminal.vt_write(b"\x1b[48;2;18;52;86m\x1b[2K");
         let cell = terminal.grid_ref(point).unwrap().cell().unwrap();
         let (tag, rgb) = cell.get_multi((cell::ContentTag, cell::ColorRgb)).unwrap();
         assert_eq!(tag, CellContentTag::BgColorRgb);
+        assert_eq!(cell.bg_color_rgb().unwrap(), rgb);
         assert_eq!(
             rgb,
             RgbColor {

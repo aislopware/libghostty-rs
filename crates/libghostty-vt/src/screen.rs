@@ -378,8 +378,8 @@ pub mod cell {
         }
     }
 
-    // Define each tag, raw output type and conversion together, so single-key
-    // and tuple queries cannot disagree about how to read a key.
+    // Define each tag, raw output type and conversion together, so named
+    // getters, single-key queries and batches share the same conversion.
     macro_rules! keys {
         ($($(#[$doc:meta])* $name:ident: $tag:ident, $raw:ty => $value:ty, $decode:expr;)*) => {$(
             $(#[$doc])*
@@ -477,6 +477,7 @@ impl Cell {
     ///
     /// The key determines the result type. For example, [`cell::Codepoint`]
     /// returns a `u32`, while [`cell::HasText`] returns a `bool`.
+    /// Named getters such as [`Self::codepoint`] are conveniences for single-key queries.
     pub fn get<K: cell::Key>(self, _key: K) -> Result<K::Value> {
         let mut value = MaybeUninit::<K::Raw>::zeroed();
         // SAFETY: The sealed key pairs its tag with the documented raw type.
@@ -511,6 +512,56 @@ impl Cell {
     /// ```
     pub fn get_multi<Q: cell::Query>(self, _keys: Q) -> Result<Q::Output> {
         Q::read(self)
+    }
+
+    /// The codepoint of the cell (0 if empty or bg-color-only).
+    pub fn codepoint(self) -> Result<u32> {
+        self.get(cell::Codepoint)
+    }
+    /// The content tag describing what kind of content is in the cell.
+    pub fn content_tag(self) -> Result<CellContentTag> {
+        self.get(cell::ContentTag)
+    }
+    /// The wide property of the cell.
+    pub fn wide(self) -> Result<CellWide> {
+        self.get(cell::Wide)
+    }
+    /// Whether the cell has text to render.
+    pub fn has_text(self) -> Result<bool> {
+        self.get(cell::HasText)
+    }
+    /// Whether the cell has non-default styling.
+    pub fn has_styling(self) -> Result<bool> {
+        self.get(cell::HasStyling)
+    }
+    /// The style ID for the cell (for use with style lookups).
+    pub fn style_id(self) -> Result<style::Id> {
+        self.get(cell::StyleId)
+    }
+    /// Whether the cell has a hyperlink.
+    pub fn has_hyperlink(self) -> Result<bool> {
+        self.get(cell::HasHyperlink)
+    }
+    /// Whether the cell is protected.
+    pub fn is_protected(self) -> Result<bool> {
+        self.get(cell::Protected)
+    }
+    /// The semantic content type of the cell (from OSC 133).
+    pub fn semantic_content(self) -> Result<CellSemanticContent> {
+        self.get(cell::SemanticContent)
+    }
+
+    /// The palette index for the cell's background color.
+    ///
+    /// Only valid when [`Self::content_tag`] is [`CellContentTag::BgColorPalette`].
+    pub fn bg_color_palette(self) -> Result<PaletteIndex> {
+        self.get(cell::ColorPalette)
+    }
+    /// The RGB color value for the cell's background color.
+    ///
+    /// Only valid when [`Self::content_tag`] is [`CellContentTag::BgColorRgb`].
+    pub fn bg_color_rgb(self) -> Result<RgbColor> {
+        self.get(cell::ColorRgb)
     }
 }
 
