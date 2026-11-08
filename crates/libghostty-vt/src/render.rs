@@ -692,7 +692,7 @@ pub struct CellIteration<'alloc, 's> {
 /// while let Some(placement) = placements.next() {
 ///     // Skip any protocol this renderer doesn't support. That includes
 ///     // protocols added upstream that this crate doesn't know yet, which
-///     // give `Err(Error::InvalidValue)` rather than a variant.
+///     // give `Err(Error::Unsupported)` rather than a variant.
 ///     let Ok(ImageProtocol::Kitty) = placement.protocol() else {
 ///         continue;
 ///     };
@@ -935,7 +935,7 @@ impl Snapshot<'_, '_> {
     /// Get the current dirty state.
     pub fn dirty(&self) -> Result<Dirty> {
         self.get::<ffi::RenderStateDirty::Type>(ffi::RenderStateData::DIRTY)
-            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+            .and_then(|v| v.try_into().map_err(|_| Error::Unsupported))
     }
 
     /// Get the viewport width.
@@ -990,7 +990,7 @@ impl Snapshot<'_, '_> {
     /// Get the visual style of the cursor.
     pub fn cursor_visual_style(&self) -> Result<CursorStyle> {
         self.get::<ffi::CursorStyle::Type>(ffi::RenderStateData::CURSOR_VISUAL_STYLE)
-            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+            .and_then(|v| v.try_into().map_err(|_| Error::Unsupported))
     }
 
     /// Get the relative position of the cursor and other information
@@ -1036,7 +1036,7 @@ impl Snapshot<'_, '_> {
             visual_style: raw
                 .visual_style
                 .try_into()
-                .map_err(|_| Error::InvalidValue)?,
+                .map_err(|_| Error::Unsupported)?,
         })
     }
 
@@ -1579,8 +1579,7 @@ impl CellIteration<'_, '_> {
                 }
                 // `cbuf.len` is the size needed, and `bytes` is empty.
                 ffi::Result::OUT_OF_SPACE => bytes.reserve(cbuf.len),
-                ffi::Result::OUT_OF_MEMORY => return Err(Error::OutOfMemory),
-                _ => return Err(Error::InvalidValue),
+                code => return Err(crate::error::error(code, 0)),
             }
         }
     }
@@ -1752,10 +1751,10 @@ impl ImageIteration<'_, '_> {
     ///
     /// New protocols may be added in later versions. Skip placements with a
     /// protocol you don't support. A protocol that this crate doesn't know
-    /// yet gives [`Error::InvalidValue`].
+    /// yet gives [`Error::Unsupported`].
     pub fn protocol(&self) -> Result<ImageProtocol> {
         self.get::<ffi::ImageProtocol::Type>(ffi::RenderStateImageData::PROTOCOL)
-            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+            .and_then(|v| v.try_into().map_err(|_| Error::Unsupported))
     }
 
     /// The ID of the image to draw.
@@ -1806,7 +1805,7 @@ impl ImageIteration<'_, '_> {
     /// The layer to draw the image in.
     pub fn layer(&self) -> Result<ImageLayer> {
         self.get::<ffi::ImageLayer::Type>(ffi::RenderStateImageData::LAYER)
-            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+            .and_then(|v| v.try_into().map_err(|_| Error::Unsupported))
     }
 
     /// The z-index, which orders images within a [layer](Self::layer).
@@ -1925,12 +1924,12 @@ impl ImageIteration<'_, '_> {
     ///
     /// Returns `None` if the placement is from another
     /// [protocol](Self::protocol). New kinds may be added in later versions.
-    /// A kind that this crate doesn't know yet gives [`Error::InvalidValue`].
+    /// A kind that this crate doesn't know yet gives [`Error::Unsupported`].
     pub fn kitty_kind(&self) -> Result<Option<KittyPlacementKind>> {
         self.get_optional::<ffi::RenderStateKittyPlacementKind::Type>(
             ffi::RenderStateImageData::KITTY_KIND,
         )?
-        .map(|v| v.try_into().map_err(|_| Error::InvalidValue))
+        .map(|v| v.try_into().map_err(|_| Error::Unsupported))
         .transpose()
     }
 }
@@ -2007,7 +2006,7 @@ pub enum Dirty {
 ///
 /// New protocols may be added in later versions. Skip placements with a
 /// protocol you don't support. [`ImageIteration::protocol`] returns
-/// [`Error::InvalidValue`] for a protocol that this crate doesn't know.
+/// [`Error::Unsupported`] for a protocol that this crate doesn't know.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, int_enum::IntEnum)]
 #[non_exhaustive]

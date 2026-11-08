@@ -363,7 +363,7 @@ impl Row {
     /// The semantic prompt state of this row.
     pub fn semantic_prompt(self) -> Result<RowSemanticPrompt> {
         self.get::<ffi::RowSemanticPrompt::Type>(ffi::RowData::SEMANTIC_PROMPT)
-            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+            .and_then(|v| v.try_into().map_err(|_| Error::Unsupported))
     }
     /// Whether this row contains a Kitty virtual placeholder.
     pub fn has_kitty_virtual_placeholder(self) -> Result<bool> {
@@ -399,12 +399,12 @@ impl Cell {
     /// The content tag describing what kind of content is in the cell.
     pub fn content_tag(self) -> Result<CellContentTag> {
         self.get::<ffi::CellContentTag::Type>(ffi::CellData::CONTENT_TAG)
-            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+            .and_then(|v| v.try_into().map_err(|_| Error::Unsupported))
     }
     /// The wide property of the cell.
     pub fn wide(self) -> Result<CellWide> {
         self.get::<ffi::CellWide::Type>(ffi::CellData::WIDE)
-            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+            .and_then(|v| v.try_into().map_err(|_| Error::Unsupported))
     }
     /// Whether the cell has text to render.
     pub fn has_text(self) -> Result<bool> {
@@ -429,7 +429,7 @@ impl Cell {
     /// The semantic content type of the cell (from OSC 133).
     pub fn semantic_content(self) -> Result<CellSemanticContent> {
         self.get::<ffi::CellSemanticContent::Type>(ffi::CellData::SEMANTIC_CONTENT)
-            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+            .and_then(|v| v.try_into().map_err(|_| Error::Unsupported))
     }
 
     /// Every field at once, decoded from the packed value where the linked
@@ -673,7 +673,7 @@ impl CellLayout {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidValue`] for an enum value this binding does not know.
+    /// [`Error::Unsupported`] for an enum value this binding does not know.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "each field was checked to fit its type when the layout was read"
@@ -682,7 +682,7 @@ impl CellLayout {
     pub fn decode(&self, cell: Cell) -> Result<CellFields> {
         let raw = cell.0;
         let content_tag = CellContentTag::try_from(self.content_tag.of(raw) as i32)
-            .map_err(|_| Error::InvalidValue)?;
+            .map_err(|_| Error::Unsupported)?;
         let codepoint = match content_tag {
             CellContentTag::Codepoint | CellContentTag::CodepointGrapheme => {
                 self.codepoint.of(raw) as u32
@@ -693,11 +693,11 @@ impl CellLayout {
             content_tag,
             codepoint,
             style_id: style::Id(self.style_id.of(raw) as ffi::StyleId),
-            wide: CellWide::try_from(self.wide.of(raw) as i32).map_err(|_| Error::InvalidValue)?,
+            wide: CellWide::try_from(self.wide.of(raw) as i32).map_err(|_| Error::Unsupported)?,
             protected: self.protected.of(raw) != 0,
             hyperlink: self.hyperlink.of(raw) != 0,
             semantic_content: CellSemanticContent::try_from(self.semantic_content.of(raw) as i32)
-                .map_err(|_| Error::InvalidValue)?,
+                .map_err(|_| Error::Unsupported)?,
         };
         debug_assert_eq!(
             cell.fields_one_by_one().ok(),

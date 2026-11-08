@@ -163,7 +163,7 @@ impl TryFrom<ffi::Style> for Style {
             invisible: flag(FLAG_INVISIBLE),
             strikethrough: flag(FLAG_STRIKETHROUGH),
             overline: flag(FLAG_OVERLINE),
-            underline: Underline::try_from(underline).map_err(|_| Error::InvalidValue)?,
+            underline: Underline::try_from(underline).map_err(|_| Error::Unsupported)?,
         })
     }
 }

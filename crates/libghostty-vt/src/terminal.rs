@@ -798,7 +798,7 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
             ffi::ghostty_terminal_compress(self.inner.as_raw(), mode.into(), &raw mut value)
         };
         from_result(result)?;
-        value.try_into().map_err(|_| Error::InvalidValue)
+        value.try_into().map_err(|_| Error::Unsupported)
     }
 
     /// Return the current compression activity token.
@@ -1171,7 +1171,7 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     pub fn mouse_shape(&self) -> Result<mouse::Shape> {
         self.get::<ffi::MouseShape::Type>(Data::MOUSE_SHAPE)?
             .try_into()
-            .map_err(|_| Error::InvalidValue)
+            .map_err(|_| Error::Unsupported)
     }
     /// Get the current Kitty keyboard protocol flags.
     pub fn kitty_keyboard_flags(&self) -> Result<key::KittyKeyFlags> {
@@ -1197,7 +1197,7 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     /// Get the currently active screen.
     pub fn active_screen(&self) -> Result<Screen> {
         self.get::<ffi::TerminalScreen::Type>(Data::ACTIVE_SCREEN)
-            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+            .and_then(|v| v.try_into().map_err(|_| Error::Unsupported))
     }
     /// Whether the viewport is currently pinned to the active area.
     ///
@@ -3006,7 +3006,7 @@ impl ProgressReport<'_> {
         unsafe { *self.ptr }
             .state
             .try_into()
-            .map_err(|_| Error::InvalidValue)
+            .map_err(|_| Error::Unsupported)
     }
 
     /// Progress percentage from 0 through 100, or `None` when omitted.
@@ -3234,7 +3234,7 @@ impl<'t> ProgramStatus<'t> {
     /// A state value from a newer libghostty that these bindings don't know
     /// yet gives [`Error::InvalidValue`].
     pub fn state(self) -> Result<ProgramStatusState> {
-        self.raw().state.try_into().map_err(|_| Error::InvalidValue)
+        self.raw().state.try_into().map_err(|_| Error::Unsupported)
     }
 
     /// What the program needs from the user. Only set for
@@ -3245,7 +3245,7 @@ impl<'t> ProgramStatus<'t> {
     /// A kind value from a newer libghostty that these bindings don't know
     /// yet gives [`Error::InvalidValue`].
     pub fn kind(self) -> Result<ProgramStatusKind> {
-        self.raw().kind.try_into().map_err(|_| Error::InvalidValue)
+        self.raw().kind.try_into().map_err(|_| Error::Unsupported)
     }
 
     /// How far along the work is, from 0 through 100, or `None` when there
@@ -3389,7 +3389,7 @@ impl<'t> SemanticPrompt<'t> {
     /// A kind value from a newer libghostty that these bindings don't know
     /// yet gives [`Error::InvalidValue`].
     pub fn kind(self) -> Result<SemanticPromptKind> {
-        self.raw().kind.try_into().map_err(|_| Error::InvalidValue)
+        self.raw().kind.try_into().map_err(|_| Error::Unsupported)
     }
 
     /// Which prompt is starting. Set for
@@ -3397,12 +3397,12 @@ impl<'t> SemanticPrompt<'t> {
     /// for other kinds.
     ///
     /// A prompt kind value from a newer libghostty that these bindings don't
-    /// know yet gives [`Error::InvalidValue`].
+    /// know yet gives [`Error::Unsupported`].
     pub fn prompt_kind(self) -> Result<PromptKind> {
         self.raw()
             .prompt_kind
             .try_into()
-            .map_err(|_| Error::InvalidValue)
+            .map_err(|_| Error::Unsupported)
     }
 
     /// The command's exit code, or `None` if the shell didn't report one.
